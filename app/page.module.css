@@ -4,6 +4,57 @@
   padding: 48px 24px 80px;
 }
 
+.keywordsBox {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.keywordsInput {
+  flex: 1;
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.keywordsInput:focus {
+  outline: none;
+  border-color: var(--muted);
+}
+
+.keywordsButton {
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--ink);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.keywordsButton:hover {
+  opacity: 0.85;
+}
+
+.defaultNote {
+  margin: 0 0 28px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.banner {
+  margin: 0 0 24px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  background: #f6f6f4;
+  border-radius: 6px;
+}
+
 .name {
   margin: 0;
   font-size: 32px;

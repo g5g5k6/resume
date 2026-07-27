@@ -136,20 +136,28 @@ export function monthKey(value: string): number {
 }
 
 /**
- * The Default Resume: Positions in reverse-chronological order (by end date,
- * then start date), each carrying only its `default: true` Bullets in original
- * order. Positions with no default Bullets are omitted.
+ * Sort Positions reverse-chronologically (most recent first) by end date, then
+ * start date. Returns a new array; the input is not mutated.
+ */
+export function sortByReverseChronology(positions: Position[]): Position[] {
+  return [...positions].sort((a, b) => {
+    const endDiff = monthKey(b.end) - monthKey(a.end);
+    if (endDiff !== 0) return endDiff;
+    return monthKey(b.start) - monthKey(a.start);
+  });
+}
+
+/**
+ * The Default Resume: Positions in reverse-chronological order, each carrying
+ * only its `default: true` Bullets in original order. Positions with no default
+ * Bullets are omitted.
  */
 export function getDefaultResume(data: ResumeData): Position[] {
-  return data.positions
+  const withDefaults = data.positions
     .map((position) => ({
       ...position,
       bullets: position.bullets.filter((b) => b.default),
     }))
-    .filter((position) => position.bullets.length > 0)
-    .sort((a, b) => {
-      const endDiff = monthKey(b.end) - monthKey(a.end);
-      if (endDiff !== 0) return endDiff;
-      return monthKey(b.start) - monthKey(a.start);
-    });
+    .filter((position) => position.bullets.length > 0);
+  return sortByReverseChronology(withDefaults);
 }
