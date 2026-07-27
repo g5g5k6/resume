@@ -1,0 +1,51 @@
+# Owner experience data. Bullet IDs are assigned at load time (p{posIdx}b{bulletIdx})
+# and are NOT stored here. `default: true` marks a Bullet as part of the Default Resume.
+owner:
+  name: James Kuo
+  headline: Backend Engineer
+  contact:
+    email: james@example.com
+    location: Taipei, Taiwan
+    links:
+      - https://github.com/jameskuo
+      - https://linkedin.com/in/jameskuo
+
+positions:
+  - company: Acme Corp
+    title: Senior Backend Engineer
+    start: "2023-01"
+    end: present
+    location: Taipei, Taiwan
+    bullets:
+      - text: Designed and shipped a Python API serving 2M requests/day at p99 under 80ms.
+        default: true
+      - text: Cut cloud spend 35% by right-sizing services and adding a Redis caching layer.
+        default: true
+      - text: Mentored 4 junior engineers and ran the team's weekly design review.
+        default: false
+      - text: Migrated 12 legacy cron jobs to an event-driven queue, removing nightly outages.
+        default: true
+
+  - company: Globex
+    title: Backend Engineer
+    start: "2020-06"
+    end: "2022-12"
+    location: Remote
+    bullets:
+      - text: Built a billing pipeline in Go that reconciled 500K daily transactions.
+        default: true
+      - text: Led the migration from a monolith to 6 services with zero customer downtime.
+        default: true
+      - text: Wrote the on-call runbook adopted across 3 backend teams.
+        default: false
+
+  - company: Initech
+    title: Junior Software Engineer
+    start: "2018-08"
+    end: "2020-05"
+    location: Hsinchu, Taiwan
+    bullets:
+      - text: Automated the QA regression suite, shrinking release cycles from 2 weeks to 3 days.
+        default: true
+      - text: Fixed 200+ bugs in the customer portal during a stabilization quarter.
+        default: false

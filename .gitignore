@@ -7,3 +7,5 @@ build/
 .next/
 *.log
 coverage/
+next-env.d.ts
+*.tsbuildinfo
