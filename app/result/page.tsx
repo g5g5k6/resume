@@ -7,10 +7,27 @@ import type { GenerateResponse } from "@/lib/engine/generate";
 import ResumeView from "../ResumeView";
 import styles from "../page.module.css";
 
+/**
+ * Pull a friendly, non-technical message off a failed `/api/generate` response.
+ * The route already sends HR-appropriate copy for 429 (rate-limited and daily
+ * cap) and 500 in an `error` field, so an HR User never sees a raw status code.
+ */
+async function friendlyError(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    if (typeof body.error === "string" && body.error.trim() !== "") return body.error;
+  } catch {
+    // fall through to the generic message
+  }
+  return "Something went wrong while building the resume. Please try again.";
+}
+
 function Result() {
   const keywords = useSearchParams().get("keywords") ?? "";
   const [state, setState] = useState<
-    { status: "loading" } | { status: "error" } | { status: "ready"; data: GenerateResponse }
+    | { status: "loading" }
+    | { status: "error"; message: string }
+    | { status: "ready"; data: GenerateResponse }
   >({ status: "loading" });
 
   useEffect(() => {
@@ -22,15 +39,21 @@ function Result() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ keywords }),
     })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<GenerateResponse>;
-      })
-      .then((data) => {
+      .then(async (res) => {
+        if (!res.ok) {
+          const message = await friendlyError(res);
+          if (active) setState({ status: "error", message });
+          return;
+        }
+        const data = (await res.json()) as GenerateResponse;
         if (active) setState({ status: "ready", data });
       })
       .catch(() => {
-        if (active) setState({ status: "error" });
+        if (active)
+          setState({
+            status: "error",
+            message: "Couldn't reach the server. Check your connection and try again.",
+          });
       });
     return () => {
       active = false;
@@ -46,14 +69,22 @@ function Result() {
   }
 
   if (state.status === "loading") {
-    return <p className={styles.defaultNote}>Tailoring the resume to “{keywords}”…</p>;
+    return (
+      <div className={styles.status} role="status" aria-live="polite">
+        <span className={styles.spinner} aria-hidden="true" />
+        <p className={styles.statusText}>Tailoring the resume to “{keywords}”…</p>
+      </div>
+    );
   }
 
   if (state.status === "error") {
     return (
-      <p className={styles.defaultNote}>
-        Something went wrong. <Link href="/">Try again</Link>.
-      </p>
+      <div className={styles.status} role="alert">
+        <p className={styles.statusText}>{state.message}</p>
+        <p className={styles.defaultNote}>
+          <Link href="/">Start over</Link>
+        </p>
+      </div>
     );
   }
 
@@ -64,9 +95,18 @@ function Result() {
 
   return (
     <>
-      <p className={styles.banner}>
-        {banner} <Link href="/">Start over</Link>
-      </p>
+      <div className={styles.toolbar}>
+        <p className={styles.banner}>
+          {banner} <Link href="/">Start over</Link>
+        </p>
+        <button
+          type="button"
+          className={styles.printButton}
+          onClick={() => window.print()}
+        >
+          Save as PDF
+        </button>
+      </div>
       <ResumeView owner={state.data.owner} positions={state.data.positions} />
     </>
   );

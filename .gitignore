@@ -9,3 +9,8 @@ build/
 coverage/
 next-env.d.ts
 *.tsbuildinfo
+
+# Playwright
+/test-results/
+/playwright-report/
+/playwright/.cache/
