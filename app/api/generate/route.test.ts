@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Claude wrapper so the route never makes a network call. The ranked
-// ids are set per-test via `mockRanking`.
+// ids are set per-test via `mockRanking`; rephrase/judge are inert (no rewrites),
+// so the route renders original wording.
 let mockRanking: string[] = [];
 vi.mock("@/lib/llm", () => ({
   createRankBullets: () => async () => mockRanking,
+  createRephrase: () => async () => ({}),
+  createJudge: () => async () => ({}),
 }));
 
 import { POST } from "./route";
