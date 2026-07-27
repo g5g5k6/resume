@@ -1,27 +1,43 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryStore, type Store } from "@/lib/redis";
 
-// Mock the Claude wrapper so the route never makes a network call. The ranked
+// Mock the Claude wrapper so the route never makes a network call. `rankCalls`
+// counts SELECT invocations so we can prove a cache hit skips the LLM. The ranked
 // ids are set per-test via `mockRanking`; rephrase/judge are inert (no rewrites),
 // so the route renders original wording.
 let mockRanking: string[] = [];
+let rankCalls = 0;
 vi.mock("@/lib/llm", () => ({
-  createRankBullets: () => async () => mockRanking,
+  createRankBullets: () => async () => {
+    rankCalls++;
+    return mockRanking;
+  },
   createRephrase: () => async () => ({}),
   createJudge: () => async () => ({}),
 }));
 
+// A fresh in-memory store per test, so cache/rate-limit/spend state never leaks
+// between cases. The route reaches Redis only through `getStore`.
+let store: Store;
+vi.mock("@/lib/redis", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/redis")>("@/lib/redis");
+  return { ...actual, getStore: () => store };
+});
+
 import { POST } from "./route";
 
-function post(body: unknown): Request {
+function post(body: unknown, ip = "1.2.3.4"): Request {
   return new Request("http://localhost/api/generate", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-forwarded-for": ip },
     body: JSON.stringify(body),
   });
 }
 
 beforeEach(() => {
   mockRanking = [];
+  rankCalls = 0;
+  store = createMemoryStore();
 });
 
 describe("POST /api/generate", () => {
@@ -60,5 +76,50 @@ describe("POST /api/generate", () => {
   it("rejects blank keywords with 400", async () => {
     const res = await POST(post({ keywords: "   " }));
     expect(res.status).toBe(400);
+  });
+
+  it("serves an identical repeat request from cache without calling the LLM", async () => {
+    mockRanking = ["p0b0", "p1b0", "p2b0"];
+
+    const first = await POST(post({ keywords: "backend go billing" }));
+    expect(first.status).toBe(200);
+    expect(rankCalls).toBe(1);
+
+    // Same keywords + unchanged data → cache hit, no second SELECT call.
+    const second = await POST(post({ keywords: "backend go billing" }));
+    expect(second.status).toBe(200);
+    expect(rankCalls).toBe(1);
+    expect(await second.json()).toEqual(await first.json());
+  });
+
+  it("returns 429 for the 6th request from an IP within a minute", async () => {
+    mockRanking = ["p0b0", "p1b0", "p2b0"];
+    // Distinct keywords each time so the cache never short-circuits the counter.
+    for (let i = 0; i < 5; i++) {
+      const ok = await POST(post({ keywords: `query number ${i}` }));
+      expect(ok.status).toBe(200);
+    }
+    const blocked = await POST(post({ keywords: "query number 6" }));
+    expect(blocked.status).toBe(429);
+    expect((await blocked.json()).error).toMatch(/too quickly/i);
+  });
+
+  it("returns a friendly 429 once the daily cap is exceeded", async () => {
+    const original = process.env.DAILY_REQUEST_CAP;
+    process.env.DAILY_REQUEST_CAP = "1";
+    try {
+      mockRanking = ["p0b0", "p1b0", "p2b0"];
+      // First cache-miss request consumes the day's single allowed call.
+      const first = await POST(post({ keywords: "first distinct query" }));
+      expect(first.status).toBe(200);
+
+      // Second distinct request is over the cap → friendly message, not a 500.
+      const capped = await POST(post({ keywords: "second distinct query" }));
+      expect(capped.status).toBe(429);
+      expect((await capped.json()).error).toMatch(/tomorrow/i);
+    } finally {
+      if (original === undefined) delete process.env.DAILY_REQUEST_CAP;
+      else process.env.DAILY_REQUEST_CAP = original;
+    }
   });
 });
