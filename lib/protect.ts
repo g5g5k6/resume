@@ -16,21 +16,46 @@ export const RATE_LIMIT = 5;
 /** The rate-limit window, in seconds. */
 export const RATE_WINDOW_SECONDS = 60;
 
-/** Cache entries live this long; a safety net for keys orphaned by data edits. */
-const CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * Cache entries live this long; a safety net for keys orphaned by data edits.
+ * A generous TTL is a hit-rate knob, not a staleness risk: `dataHash` invalidates
+ * entries instantly on any data edit. See ADR 0003.
+ */
+const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** Daily counters expire after two days — the date-stamped key rotates anyway. */
 const SPEND_TTL_SECONDS = 2 * 24 * 60 * 60;
 
-const DEFAULT_DAILY_CAP = 200;
+const DEFAULT_DAILY_CAP = 50;
+
+/** Keywords longer than this are rejected before any LLM call. See ADR 0003. */
+export const MAX_KEYWORDS_LENGTH = 200;
 
 // ---- Result cache ---------------------------------------------------------
 
 /**
- * The cache key for a request. Folding `dataHash` in means an edit to
- * `resume.data.yaml` produces a new key space, so stale results are never served.
+ * Normalize keywords to a canonical token set so every phrasing of one intent
+ * collapses to a single cache key: lowercase, strip punctuation, split on
+ * whitespace, de-duplicate, and sort. `"Backend, Go"`, `"go backend"`, and
+ * `"BACKEND  go"` all map to `"backend go"`. This affects the cache key only —
+ * the original phrasing is still what reaches the LLM on a miss.
+ */
+function normalizeKeywords(keywords: string): string {
+  const words = keywords
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return [...new Set(words)].sort().join(" ");
+}
+
+/**
+ * The cache key for a request. Keywords are normalized (see
+ * {@link normalizeKeywords}) so equivalent phrasings share one entry; folding
+ * `dataHash` in means an edit to `resume.data.yaml` produces a new key space,
+ * so stale results are never served.
  */
 export function cacheKey(keywords: string, dataHash: string): string {
-  return `cache:${dataHash}:${keywords}`;
+  return `cache:${dataHash}:${normalizeKeywords(keywords)}`;
 }
 
 /** Read and JSON-decode a cached result, or `null` on a miss. */

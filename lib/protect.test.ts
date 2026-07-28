@@ -23,6 +23,22 @@ describe("cacheKey", () => {
   it("changes when the keywords change", () => {
     expect(cacheKey("go backend", "abc123")).not.toBe(cacheKey("rust backend", "abc123"));
   });
+
+  it("collapses equivalent phrasings to one key (case, punctuation, order, spacing)", () => {
+    const canonical = cacheKey("go backend", "abc123");
+    expect(cacheKey("Backend, Go", "abc123")).toBe(canonical);
+    expect(cacheKey("BACKEND  go", "abc123")).toBe(canonical);
+    expect(cacheKey("  go, backend!  ", "abc123")).toBe(canonical);
+  });
+
+  it("de-duplicates repeated words", () => {
+    expect(cacheKey("go go backend", "abc123")).toBe(cacheKey("go backend", "abc123"));
+  });
+
+  it("keeps distinct intents in distinct keys (no false collision)", () => {
+    expect(cacheKey("go backend", "abc123")).not.toBe(cacheKey("go frontend", "abc123"));
+    expect(cacheKey("go backend", "abc123")).not.toBe(cacheKey("backend", "abc123"));
+  });
 });
 
 describe("result cache", () => {
@@ -89,11 +105,11 @@ describe("dailyCap", () => {
     expect(dailyCap()).toBe(42);
   });
 
-  it("defaults to 200 when unset or invalid", () => {
+  it("defaults to 50 when unset or invalid", () => {
     delete process.env.DAILY_REQUEST_CAP;
-    expect(dailyCap()).toBe(200);
+    expect(dailyCap()).toBe(50);
     process.env.DAILY_REQUEST_CAP = "not-a-number";
-    expect(dailyCap()).toBe(200);
+    expect(dailyCap()).toBe(50);
   });
 });
 

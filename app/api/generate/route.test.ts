@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStore, type Store } from "@/lib/redis";
+import { MAX_KEYWORDS_LENGTH } from "@/lib/protect";
 
 // Mock the Claude wrapper so the route never makes a network call. `rankCalls`
 // counts SELECT invocations so we can prove a cache hit skips the LLM. The ranked
@@ -90,6 +91,30 @@ describe("POST /api/generate", () => {
     expect(second.status).toBe(200);
     expect(rankCalls).toBe(1);
     expect(await second.json()).toEqual(await first.json());
+  });
+
+  it("rejects over-length keywords with 400, before any LLM or store call", async () => {
+    // Track store touches so we can prove the guard runs before the cache/counter.
+    let storeCalls = 0;
+    const bare = store;
+    store = new Proxy(bare, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (typeof value === "function") {
+          return (...args: unknown[]) => {
+            storeCalls++;
+            return (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        }
+        return value;
+      },
+    });
+
+    const res = await POST(post({ keywords: "a".repeat(MAX_KEYWORDS_LENGTH + 1) }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/keep keywords short/i);
+    expect(rankCalls).toBe(0);
+    expect(storeCalls).toBe(0);
   });
 
   it("returns 429 for the 6th request from an IP within a minute", async () => {

@@ -4,6 +4,7 @@ import { generateResume, type GenerateResponse } from "@/lib/engine/generate";
 import { createJudge, createRankBullets, createRephrase } from "@/lib/llm";
 import { getStore } from "@/lib/redis";
 import {
+  MAX_KEYWORDS_LENGTH,
   cacheKey,
   checkRateLimit,
   dailyCap,
@@ -48,6 +49,16 @@ export async function POST(request: Request) {
   }
 
   const trimmed = keywords.trim();
+
+  // Input length cap — reject over-long keywords before any LLM call, closing
+  // the unbounded-input-token hole. Runs before the store touches, too.
+  if (trimmed.length > MAX_KEYWORDS_LENGTH) {
+    return NextResponse.json(
+      { error: "Please keep keywords short — a role or a few skills works best." },
+      { status: 400 },
+    );
+  }
+
   const store = getStore();
 
   // 1. Per-IP rate limit — the cheapest guard, so it runs first.
