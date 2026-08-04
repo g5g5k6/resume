@@ -14,9 +14,13 @@ positions:
     end: present
     location: L
     bullets:
-      - text: first
+      - fragments:
+          - text: first
+            core: true
         default: true
-      - text: second
+      - fragments:
+          - text: second
+            core: true
         default: false
   - company: B
     title: T
@@ -24,7 +28,9 @@ positions:
     end: "2021-01"
     location: L
     bullets:
-      - text: third
+      - fragments:
+          - text: third
+            core: true
         default: true
 `;
 

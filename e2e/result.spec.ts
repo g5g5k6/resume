@@ -31,6 +31,13 @@ const TAILORED: GenerateResponse = {
       bullets: [
         {
           id: "p1b0",
+          fragments: [
+            {
+              id: "p1b0f0",
+              text: "Shipped a Go billing pipeline reconciling 500K transactions a day.",
+              core: true,
+            },
+          ],
           text: "Shipped a Go billing pipeline reconciling 500K transactions a day.",
           default: false,
         },

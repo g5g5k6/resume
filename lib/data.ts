@@ -23,10 +23,27 @@ export const PRESENT = "present";
  */
 const PRESENT_MONTH_KEY = Number.MAX_SAFE_INTEGER;
 
-const rawBulletSchema = z.object({
+const rawFragmentSchema = z.object({
   text: z.string().min(1),
-  default: z.boolean(),
+  /** Marks the one Fragment carrying the verb/spine. Exactly one per Bullet. */
+  core: z.boolean().optional(),
 });
+
+const rawBulletSchema = z
+  .object({
+    fragments: z.array(rawFragmentSchema).min(1),
+    default: z.boolean(),
+  })
+  .superRefine((bullet, ctx) => {
+    const cores = bullet.fragments.filter((f) => f.core === true).length;
+    if (cores !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `a Bullet must have exactly one core Fragment, found ${cores}`,
+        path: ["fragments"],
+      });
+    }
+  });
 
 const rawPositionSchema = z.object({
   company: z.string().min(1),
@@ -52,11 +69,43 @@ const rawDataSchema = z.object({
 
 export type Owner = z.infer<typeof rawDataSchema>["owner"];
 
+/**
+ * Separator used to join a Bullet's Fragments into its canonical text. A single
+ * space, so additive clauses append cleanly after the core (see ADR 0004).
+ */
+export const FRAGMENT_SEPARATOR = " ";
+
+export interface Fragment {
+  /** Deterministic, assigned at load in authored order: `p{posIdx}b{bulletIdx}f{fragIdx}`. */
+  id: string;
+  text: string;
+  /** True for the single spine Fragment; false for additives. */
+  core: boolean;
+}
+
 export interface Bullet {
   /** Deterministic, assigned at load: `p{posIdx}b{bulletIdx}`. */
   id: string;
+  /** The Owner's authored Fragments, in authored order. Exactly one is `core`. */
+  fragments: Fragment[];
+  /**
+   * Canonical joined text: core first, then additives in authored order, joined
+   * by {@link FRAGMENT_SEPARATOR}. Derived — every existing consumer reads this
+   * exactly as it read the former single-string `text`.
+   */
   text: string;
   default: boolean;
+}
+
+/**
+ * Join a Bullet's Fragments into its canonical text: the core first, then the
+ * additive Fragments in authored order. Assumes exactly one core (guaranteed by
+ * {@link rawBulletSchema}).
+ */
+function joinFragments(fragments: Fragment[]): string {
+  const core = fragments.filter((f) => f.core);
+  const additives = fragments.filter((f) => !f.core);
+  return [...core, ...additives].map((f) => f.text).join(FRAGMENT_SEPARATOR);
 }
 
 export interface Position {
@@ -103,10 +152,15 @@ export function parseResumeData(rawText: string): ResumeData {
 
   const enriched: Position[] = positions.map((position, posIdx) => ({
     ...position,
-    bullets: position.bullets.map((bullet, bulletIdx) => ({
-      ...bullet,
-      id: `p${posIdx}b${bulletIdx}`,
-    })),
+    bullets: position.bullets.map((bullet, bulletIdx) => {
+      const id = `p${posIdx}b${bulletIdx}`;
+      const fragments: Fragment[] = bullet.fragments.map((fragment, fragIdx) => ({
+        id: `${id}f${fragIdx}`,
+        text: fragment.text,
+        core: fragment.core === true,
+      }));
+      return { id, fragments, text: joinFragments(fragments), default: bullet.default };
+    }),
   }));
 
   const dataHash = createHash("sha256").update(rawText).digest("hex").slice(0, 16);
