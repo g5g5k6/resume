@@ -54,8 +54,9 @@ describe("fabrication fixture — zero facts absent from source", () => {
 
     for (let s = 0; s < 10; s++) {
       // Rotate a window of 4 distinct Bullets into the selection for this set.
+      // These Bullets are single-core, so the surfaced subset is the whole Bullet.
       const selected = [0, 1, 2, 3].map((k) => allIds[(s + k) % allIds.length]);
-      const rankBullets = async () => selected;
+      const rankBullets = async () => selected.map((id) => ({ id, fragmentIds: [] }));
 
       const result = await generateResume(`keyword set ${s}`, data, {
         rankBullets,

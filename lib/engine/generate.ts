@@ -1,7 +1,13 @@
-import { getDefaultResume, type Owner, type Position, type ResumeData } from "@/lib/data";
+import {
+  composeSurfaced,
+  getDefaultResume,
+  type Owner,
+  type Position,
+  type ResumeData,
+} from "@/lib/data";
 import { orderByRelevance } from "./order";
 import { rephraseBullets, type ChosenBullet, type Rephrase } from "./rephrase";
-import { selectBullets, type RankBullets } from "./select";
+import { selectBullets, type RankBullets, type RankedBullet } from "./select";
 import { verifyBullets, type Judge } from "./verify";
 
 /**
@@ -28,12 +34,20 @@ export interface GenerateResponse {
   dataHash: string;
 }
 
-/** The chosen Bullets in relevance order, each carrying its original text. */
-function chosenBullets(data: ResumeData, rankedIds: string[]): ChosenBullet[] {
-  const textById = new Map(
-    data.positions.flatMap((p) => p.bullets.map((b) => [b.id, b.text] as const)),
+/**
+ * The chosen Bullets in relevance order, each carrying its *surfaced* text — the
+ * core plus only the FACET-SELECTed additive Fragments. This surfaced subset is
+ * what REPHRASE assembles and what VERIFY later checks against, so a Fragment
+ * FACET-SELECT dropped can never leak back in and pass.
+ */
+function chosenBullets(data: ResumeData, ranked: RankedBullet[]): ChosenBullet[] {
+  const bulletById = new Map(
+    data.positions.flatMap((p) => p.bullets.map((b) => [b.id, b] as const)),
   );
-  return rankedIds.map((id) => ({ id, text: textById.get(id)! }));
+  return ranked.map(({ id, fragmentIds }) => ({
+    id,
+    text: composeSurfaced(bulletById.get(id)!, new Set(fragmentIds)),
+  }));
 }
 
 /**
@@ -49,18 +63,19 @@ export async function generateResume(
   data: ResumeData,
   deps: EngineDeps,
 ): Promise<GenerateResponse> {
-  const rankedIds = await selectBullets(keywords, data, deps.rankBullets);
+  const ranked = await selectBullets(keywords, data, deps.rankBullets);
 
   const base = { keywords, owner: data.owner, dataHash: data.dataHash };
 
-  if (rankedIds.length < RELEVANCE_FLOOR) {
+  if (ranked.length < RELEVANCE_FLOOR) {
     return { ...base, mode: "default", positions: getDefaultResume(data) };
   }
 
-  const chosen = chosenBullets(data, rankedIds);
+  const chosen = chosenBullets(data, ranked);
   const rephrased = await rephraseBullets(keywords, chosen, deps.rephrase);
   const verified = await verifyBullets(rephrased, deps.judge);
 
+  const rankedIds = ranked.map((r) => r.id);
   const textById = new Map(verified.map((b) => [b.id, b.text]));
   return { ...base, mode: "tailored", positions: orderByRelevance(data, rankedIds, textById) };
 }

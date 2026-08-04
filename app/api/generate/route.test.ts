@@ -4,14 +4,15 @@ import { MAX_KEYWORDS_LENGTH } from "@/lib/protect";
 
 // Mock the Claude wrapper so the route never makes a network call. `rankCalls`
 // counts SELECT invocations so we can prove a cache hit skips the LLM. The ranked
-// ids are set per-test via `mockRanking`; rephrase/judge are inert (no rewrites),
-// so the route renders original wording.
+// Bullet ids are set per-test via `mockRanking` (surfacing no additives, since the
+// real data is single-core); rephrase/judge are inert (no rewrites), so the route
+// renders original wording.
 let mockRanking: string[] = [];
 let rankCalls = 0;
 vi.mock("@/lib/llm", () => ({
   createRankBullets: () => async () => {
     rankCalls++;
-    return mockRanking;
+    return mockRanking.map((id) => ({ id, fragmentIds: [] }));
   },
   createRephrase: () => async () => ({}),
   createJudge: () => async () => ({}),

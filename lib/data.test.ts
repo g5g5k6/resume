@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  composeSurfaced,
   getDefaultResume,
   loadResumeData,
   monthKey,
@@ -214,6 +215,44 @@ positions:
 `;
     const [bullet] = parseResumeData(yaml).positions[0].bullets;
     expect(bullet.text).toBe("Built a Python API for an internal tool serving 2M requests/day");
+  });
+});
+
+describe("composeSurfaced — the surfaced Fragment subset", () => {
+  const yaml = `
+owner:
+  name: X
+  headline: Y
+  contact: { email: a@b.c, location: Z, links: [] }
+positions:
+  - company: C
+    title: T
+    start: "2020-01"
+    end: present
+    location: L
+    bullets:
+      - fragments:
+          - text: leading additive
+          - text: Built a Python API
+            core: true
+          - text: serving 2M requests/day
+        default: true
+`;
+  // Fragments: p0b0f0 (additive), p0b0f1 (core), p0b0f2 (additive).
+  const [bullet] = parseResumeData(yaml).positions[0].bullets;
+
+  it("surfaces the core alone when no additives are selected", () => {
+    expect(composeSurfaced(bullet, new Set())).toBe("Built a Python API");
+  });
+
+  it("keeps the core first and adds only the selected additives, in authored order", () => {
+    expect(composeSurfaced(bullet, new Set(["p0b0f2", "p0b0f0"]))).toBe(
+      "Built a Python API leading additive serving 2M requests/day",
+    );
+  });
+
+  it("reproduces the canonical text when every additive is surfaced", () => {
+    expect(composeSurfaced(bullet, new Set(["p0b0f0", "p0b0f2"]))).toBe(bullet.text);
   });
 });
 

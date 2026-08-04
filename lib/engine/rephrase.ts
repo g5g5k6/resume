@@ -1,4 +1,9 @@
-/** A chosen Bullet handed to REPHRASE: its id and the Owner's original text. */
+/**
+ * A chosen Bullet handed to REPHRASE: its id and its *surfaced* text — the core
+ * plus the FACET-SELECTed additive Fragments, already joined into one string.
+ * This subset is the only text REPHRASE ever sees, so a dropped Fragment is not
+ * available for it to reintroduce.
+ */
 export interface ChosenBullet {
   id: string;
   text: string;
@@ -15,9 +20,10 @@ export type Rephrase = (
   chosen: ChosenBullet[],
 ) => Promise<Record<string, string>>;
 
-/** A Bullet after REPHRASE: its `original` text and the current working `text`. */
+/** A Bullet after REPHRASE: its `original` surfaced-subset text and the working `text`. */
 export interface RephrasedBullet {
   id: string;
+  /** The surfaced subset REPHRASE started from; VERIFY checks the rewrite against this. */
   original: string;
   /** The rewrite when one was returned for this id, otherwise `original`. */
   text: string;

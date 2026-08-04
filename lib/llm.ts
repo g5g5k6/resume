@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { RankBullets, SelectableBullet } from "./engine/select";
+import type { RankBullets, RankedBullet, SelectableBullet } from "./engine/select";
 import type { ChosenBullet, Rephrase } from "./engine/rephrase";
 import type { Judge } from "./engine/verify";
 
@@ -45,35 +45,68 @@ async function structuredTurn<T>(args: {
 // ---- SELECT ---------------------------------------------------------------
 
 const SELECT_SYSTEM = [
-  "You rank resume bullets by relevance to an HR user's keywords.",
-  "You are given the keywords and a list of bullets, each with an id.",
-  "Return only the ids of bullets genuinely relevant to the keywords, ranked most",
-  "relevant first. Omit bullets that are not relevant. Do not invent ids, do not",
-  "rewrite any text, and do not return an id more than once.",
+  "You rank resume bullets by relevance to an HR user's keywords AND choose which",
+  "of each relevant bullet's optional facts to surface. You are given the keywords",
+  "and a list of bullets; each bullet has an id, its full text, and zero or more",
+  "additive fragments (each with its own id) that may be omitted. Rank bullets on",
+  "their full text: return only the ids of bullets genuinely relevant to the",
+  "keywords, ranked most relevant first, omitting bullets that are not relevant.",
+  "For each returned bullet, set fragment_ids to the ids of ONLY those additive",
+  "fragments relevant to the keywords (the bullet's core is always kept and is not",
+  "listed); use [] to surface the core alone. Do not invent ids, do not rewrite",
+  "any text, and do not return a bullet id more than once.",
 ].join(" ");
 
 const RANK_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    relevant_ids: { type: "array", items: { type: "string" } },
+    selections: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string" },
+          fragment_ids: { type: "array", items: { type: "string" } },
+        },
+        required: ["id", "fragment_ids"],
+      },
+    },
   },
-  required: ["relevant_ids"],
+  required: ["selections"],
 } as const;
 
-/** The real {@link RankBullets} backed by the Claude fast model. */
+/** Render one Bullet for the SELECT prompt: its text, then any additive fragments. */
+function formatSelectable(b: SelectableBullet): string {
+  if (b.additives.length === 0) return `${b.id}: ${b.text}`;
+  const additives = b.additives.map((f) => `    ${f.id}: ${f.text}`).join("\n");
+  return `${b.id}: ${b.text}\n  additive fragments:\n${additives}`;
+}
+
+/** The real {@link RankBullets} backed by the Claude fast model (SELECT + FACET-SELECT). */
 export function createRankBullets(): RankBullets {
   return async (keywords: string, selectable: SelectableBullet[]) => {
-    const bulletList = selectable.map((b) => `${b.id}: ${b.text}`).join("\n");
-    const parsed = await structuredTurn<{ relevant_ids?: unknown }>({
+    const bulletList = selectable.map(formatSelectable).join("\n\n");
+    const parsed = await structuredTurn<{
+      selections?: { id?: unknown; fragment_ids?: unknown }[];
+    }>({
       model: FAST_MODEL,
       maxTokens: 1024,
       system: SELECT_SYSTEM,
       prompt: `Keywords: ${keywords}\n\nBullets:\n${bulletList}`,
       schema: RANK_SCHEMA,
     });
-    if (!Array.isArray(parsed.relevant_ids)) return [];
-    return parsed.relevant_ids.filter((id): id is string => typeof id === "string");
+
+    const ranked: RankedBullet[] = [];
+    for (const sel of parsed.selections ?? []) {
+      if (typeof sel?.id !== "string") continue;
+      const fragmentIds = Array.isArray(sel.fragment_ids)
+        ? sel.fragment_ids.filter((id): id is string => typeof id === "string")
+        : [];
+      ranked.push({ id: sel.id, fragmentIds });
+    }
+    return ranked;
   };
 }
 

@@ -97,15 +97,32 @@ export interface Bullet {
   default: boolean;
 }
 
+/** Order Fragments core-first, keeping the additives in their authored order. */
+function coreFirst(fragments: Fragment[]): Fragment[] {
+  return [...fragments.filter((f) => f.core), ...fragments.filter((f) => !f.core)];
+}
+
 /**
  * Join a Bullet's Fragments into its canonical text: the core first, then the
  * additive Fragments in authored order. Assumes exactly one core (guaranteed by
  * {@link rawBulletSchema}).
  */
 function joinFragments(fragments: Fragment[]): string {
-  const core = fragments.filter((f) => f.core);
-  const additives = fragments.filter((f) => !f.core);
-  return [...core, ...additives].map((f) => f.text).join(FRAGMENT_SEPARATOR);
+  return coreFirst(fragments)
+    .map((f) => f.text)
+    .join(FRAGMENT_SEPARATOR);
+}
+
+/**
+ * Compose a Bullet's *surfaced* text for the Tailored Resume: the core Fragment
+ * (always kept) plus the additive Fragments whose ids are in
+ * `surfacedAdditiveIds`, ordered core-first with additives in authored order and
+ * joined by {@link FRAGMENT_SEPARATOR}. An empty set yields the core alone; the
+ * full set reproduces the Bullet's canonical {@link Bullet.text}. This is the
+ * subset REPHRASE assembles and VERIFY checks against (see ADR 0004).
+ */
+export function composeSurfaced(bullet: Bullet, surfacedAdditiveIds: Set<string>): string {
+  return joinFragments(bullet.fragments.filter((f) => f.core || surfacedAdditiveIds.has(f.id)));
 }
 
 export interface Position {
