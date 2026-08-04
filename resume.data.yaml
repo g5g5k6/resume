@@ -1,5 +1,9 @@
 # Owner experience data. Bullet IDs are assigned at load time (p{posIdx}b{bulletIdx})
-# and are NOT stored here. `default: true` marks a Bullet as part of the Default Resume.
+# and are NOT stored here. Fragment IDs are assigned in authored order
+# (p{posIdx}b{bulletIdx}f{fragIdx}). Each Bullet is a flat, ordered list of
+# Fragments; exactly one is `core` (the verb/spine, always rendered). Additives
+# omit `core` and must read as cleanly-appendable clauses (see ADR 0004).
+# `default: true` marks a Bullet as part of the Default Resume.
 owner:
   name: James Kuo
   headline: Backend Engineer
@@ -17,13 +21,21 @@ positions:
     end: present
     location: Taipei, Taiwan
     bullets:
-      - text: Designed and shipped a Python API serving 2M requests/day at p99 under 80ms.
+      - fragments:
+          - text: Designed and shipped a Python API serving 2M requests/day at p99 under 80ms.
+            core: true
         default: true
-      - text: Cut cloud spend 35% by right-sizing services and adding a Redis caching layer.
+      - fragments:
+          - text: Cut cloud spend 35% by right-sizing services and adding a Redis caching layer.
+            core: true
         default: true
-      - text: Mentored 4 junior engineers and ran the team's weekly design review.
+      - fragments:
+          - text: Mentored 4 junior engineers and ran the team's weekly design review.
+            core: true
         default: false
-      - text: Migrated 12 legacy cron jobs to an event-driven queue, removing nightly outages.
+      - fragments:
+          - text: Migrated 12 legacy cron jobs to an event-driven queue, removing nightly outages.
+            core: true
         default: true
 
   - company: Globex
@@ -32,11 +44,17 @@ positions:
     end: "2022-12"
     location: Remote
     bullets:
-      - text: Built a billing pipeline in Go that reconciled 500K daily transactions.
+      - fragments:
+          - text: Built a billing pipeline in Go that reconciled 500K daily transactions.
+            core: true
         default: true
-      - text: Led the migration from a monolith to 6 services with zero customer downtime.
+      - fragments:
+          - text: Led the migration from a monolith to 6 services with zero customer downtime.
+            core: true
         default: true
-      - text: Wrote the on-call runbook adopted across 3 backend teams.
+      - fragments:
+          - text: Wrote the on-call runbook adopted across 3 backend teams.
+            core: true
         default: false
 
   - company: Initech
@@ -45,7 +63,11 @@ positions:
     end: "2020-05"
     location: Hsinchu, Taiwan
     bullets:
-      - text: Automated the QA regression suite, shrinking release cycles from 2 weeks to 3 days.
+      - fragments:
+          - text: Automated the QA regression suite, shrinking release cycles from 2 weeks to 3 days.
+            core: true
         default: true
-      - text: Fixed 200+ bugs in the customer portal during a stabilization quarter.
+      - fragments:
+          - text: Fixed 200+ bugs in the customer portal during a stabilization quarter.
+            core: true
         default: false

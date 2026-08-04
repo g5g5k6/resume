@@ -2,7 +2,8 @@
 
 A web app where an HR user types keywords and receives a resume tailored to their
 needs, built from the owner's real experience data. The engine selects real,
-pre-written experience and an LLM tunes only the wording — it never authors facts.
+pre-written experience, chooses which facts surface, and lets an LLM tune the
+phrasing — it never authors facts.
 
 ## Language
 
@@ -22,20 +23,34 @@ Holds many Bullets. Not itself tailored; it appears if any of its Bullets are se
 _Avoid_: Job, role, entry
 
 **Bullet**:
-The atomic, rankable unit of experience — a single accomplishment written by the
-Owner as plain text. Selection and rephrasing both operate at the Bullet level. Carries
-no manual tags; the selector infers relevance from the text.
+The rankable unit of experience — a single accomplishment the Owner authors as a set of
+Fragments. Selection operates at the Bullet level: the selector ranks the Bullet's
+concatenated Fragment prose, carries no manual tags, and nothing about the Bullet's
+internal structure reaches selection. At render time a Bullet is composed from a
+keyword-relevant subset of its Fragments.
 _Avoid_: Point, line, entry, item
+
+**Fragment**:
+The render-time unit inside a Bullet: an independently-omittable true statement about the
+accomplishment. Defining property — omitting it can never make any retained Fragment
+misleading, so a bounding qualifier ("for an internal tool", "as an intern") is never its
+own Fragment; it stays welded into the Fragment it bounds. Honesty is a property of how
+the Owner cuts the Fragments, not a rule the composer enforces: because every Fragment is
+safe-to-omit by construction, the composer may freely surface, omit, or reorder them.
+Owner-authored; never reaches selection.
+_Avoid_: Dimension, field, tag, attribute
 
 **Keywords**:
 The free-form text an HR User supplies to describe the role they're hiring for. The
-sole tailoring input; drives which Bullets are selected and how they're reworded.
+sole tailoring input; drives which Bullets are selected, which of their Fragments
+surface, and how the result is phrased.
 _Avoid_: Query, search terms, filters
 
 **Tailored Resume**:
 The output produced for one HR request: the Bullets the selector chose, grouped by
-Position (reverse-chronological), Bullets relevance-ordered within each Position, with
-wording tuned toward the Keywords. Positions with no selected Bullets are omitted.
+Position (reverse-chronological), Bullets relevance-ordered within each Position, each
+composed from a Keyword-relevant subset of its Fragments and phrased toward the Keywords.
+Positions with no selected Bullets are omitted.
 _Avoid_: CV, generated resume, output
 
 **Default Resume**:

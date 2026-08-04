@@ -16,11 +16,17 @@ positions:
     end: present
     location: L
     bullets:
-      - text: built api
+      - fragments:
+          - text: built api
+            core: true
         default: true
-      - text: cut spend
+      - fragments:
+          - text: cut spend
+            core: true
         default: true
-      - text: mentored
+      - fragments:
+          - text: mentored
+            core: true
         default: false
   - company: Older
     title: T
@@ -28,7 +34,9 @@ positions:
     end: "2021-01"
     location: L
     bullets:
-      - text: billing pipeline
+      - fragments:
+          - text: billing pipeline
+            core: true
         default: true
 `;
 

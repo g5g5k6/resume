@@ -23,9 +23,13 @@ positions:
     end: present
     location: Remote
     bullets:
-      - text: Recent default bullet
+      - fragments:
+          - text: Recent default bullet
+            core: true
         default: true
-      - text: Recent non-default bullet
+      - fragments:
+          - text: Recent non-default bullet
+            core: true
         default: false
   - company: Older Co
     title: Engineer
@@ -33,9 +37,13 @@ positions:
     end: "2021-06"
     location: Onsite
     bullets:
-      - text: Old default bullet
+      - fragments:
+          - text: Old default bullet
+            core: true
         default: true
-      - text: Another old default bullet
+      - fragments:
+          - text: Another old default bullet
+            core: true
         default: true
 `;
 
@@ -80,6 +88,132 @@ positions:
   it("throws when default is missing on a bullet", () => {
     const bad = VALID_YAML.replace("        default: true\n", "");
     expect(() => parseResumeData(bad)).toThrow(/failed validation/);
+  });
+});
+
+describe("parseResumeData — Fragment schema and the one-core rule", () => {
+  const multiFragmentBullet = (fragments: string) => `
+owner:
+  name: X
+  headline: Y
+  contact: { email: a@b.c, location: Z, links: [] }
+positions:
+  - company: C
+    title: T
+    start: "2020-01"
+    end: present
+    location: L
+    bullets:
+      - fragments:
+${fragments}
+        default: true
+`;
+
+  it("parses a Bullet authored as multiple Fragments", () => {
+    const data = parseResumeData(
+      multiFragmentBullet(
+        [
+          "          - text: Built a Python API",
+          "            core: true",
+          "          - text: serving 2M requests/day",
+        ].join("\n"),
+      ),
+    );
+    expect(data.positions[0].bullets[0].fragments).toHaveLength(2);
+  });
+
+  it("rejects a Bullet with zero core Fragments", () => {
+    const bad = multiFragmentBullet(
+      ["          - text: an additive fragment", "          - text: another additive"].join("\n"),
+    );
+    expect(() => parseResumeData(bad)).toThrow(/exactly one core Fragment.*found 0/s);
+  });
+
+  it("rejects a Bullet with multiple core Fragments", () => {
+    const bad = multiFragmentBullet(
+      [
+        "          - text: first core",
+        "            core: true",
+        "          - text: second core",
+        "            core: true",
+      ].join("\n"),
+    );
+    expect(() => parseResumeData(bad)).toThrow(/exactly one core Fragment.*found 2/s);
+  });
+
+  it("rejects a Bullet with no fragments", () => {
+    const bad = multiFragmentBullet("          []");
+    expect(() => parseResumeData(bad)).toThrow(/failed validation/);
+  });
+});
+
+describe("parseResumeData — Fragment identity", () => {
+  it("assigns stable p{posIdx}b{bulletIdx}f{fragIdx} ids to Fragments", () => {
+    const data = parseResumeData(VALID_YAML);
+    expect(data.positions[0].bullets[0].fragments.map((f) => f.id)).toEqual(["p0b0f0"]);
+    expect(data.positions[1].bullets[1].fragments.map((f) => f.id)).toEqual(["p1b1f0"]);
+  });
+
+  it("numbers Fragments in authored order, independent of which is core", () => {
+    const yaml = `
+owner:
+  name: X
+  headline: Y
+  contact: { email: a@b.c, location: Z, links: [] }
+positions:
+  - company: C
+    title: T
+    start: "2020-01"
+    end: present
+    location: L
+    bullets:
+      - fragments:
+          - text: leading additive
+          - text: the core
+            core: true
+          - text: trailing additive
+        default: true
+`;
+    const [bullet] = parseResumeData(yaml).positions[0].bullets;
+    expect(bullet.fragments.map((f) => [f.id, f.core])).toEqual([
+      ["p0b0f0", false],
+      ["p0b0f1", true],
+      ["p0b0f2", false],
+    ]);
+  });
+});
+
+describe("parseResumeData — canonical joined text", () => {
+  it("migrates a single-string Bullet (one core Fragment) to identical text", () => {
+    // Each former `text: <string>` Bullet becomes one `core` Fragment whose
+    // canonical join is byte-identical to the original authored string.
+    const original = "Recent default bullet";
+    const data = parseResumeData(VALID_YAML);
+    expect(data.positions[0].bullets[0].text).toBe(original);
+  });
+
+  it("joins core first, then additives in authored order", () => {
+    const yaml = `
+owner:
+  name: X
+  headline: Y
+  contact: { email: a@b.c, location: Z, links: [] }
+positions:
+  - company: C
+    title: T
+    start: "2020-01"
+    end: present
+    location: L
+    bullets:
+      - fragments:
+          - text: for an internal tool
+          - text: Built a Python API
+            core: true
+          - text: serving 2M requests/day
+        default: true
+`;
+    const [bullet] = parseResumeData(yaml).positions[0].bullets;
+    expect(bullet.text).toBe("Built a Python API for an internal tool serving 2M requests/day");
   });
 });
 
