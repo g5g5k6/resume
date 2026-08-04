@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RephrasedBullet } from "./rephrase";
-import { extractCapitalized, extractNumbers, isFaithful, verifyBullets } from "./verify";
+import {
+  extractCapitalized,
+  extractNumbers,
+  extractProperNouns,
+  isFaithful,
+  verifyBullets,
+} from "./verify";
 
 describe("extractNumbers", () => {
   it("keeps each number with its unit or percent suffix", () => {
@@ -28,6 +34,24 @@ describe("extractCapitalized", () => {
   });
 });
 
+describe("extractProperNouns", () => {
+  it("excludes the sentence-initial token, keeping the rest", () => {
+    // "Built" is the opening verb, capitalized only because it starts the sentence.
+    expect(extractProperNouns("Built a Python API on Redis")).toEqual(
+      new Set(["Python", "API", "Redis"]),
+    );
+  });
+
+  it("excludes the opening token even when it looks like a proper noun", () => {
+    // The accepted gap: a sentence-initial name is invisible to this check.
+    expect(extractProperNouns("Zephyr powers the Redis cache")).toEqual(new Set(["Redis"]));
+  });
+
+  it("keeps a mid-sentence proper noun when the opening word is lowercase", () => {
+    expect(extractProperNouns("built a Python API")).toEqual(new Set(["Python", "API"]));
+  });
+});
+
 describe("isFaithful — deterministic subset gate", () => {
   const source = "Built a Python API serving 2M requests/day on Redis";
 
@@ -47,12 +71,22 @@ describe("isFaithful — deterministic subset gate", () => {
     expect(isFaithful(source, "Built a Python API on Redis and Kafka")).toBe(false);
   });
 
-  it("rejects a fabricated proper noun even in the opening word", () => {
-    expect(isFaithful(source, "Google-grade Python API on Redis")).toBe(false);
+  it("accepts an opening-verb change — the opening token is not a proper-noun check", () => {
+    expect(isFaithful(source, "Engineered a fast Python API serving 2M requests on Redis")).toBe(
+      true,
+    );
   });
 
-  it("rejects a rewrite that changes the opening capitalized verb (conservative)", () => {
-    expect(isFaithful(source, "Shipped a Python API on Redis")).toBe(false);
+  it("still rejects a fabricated number placed in the opening token", () => {
+    expect(isFaithful(source, "5M-request Python API on Redis")).toBe(false);
+  });
+
+  it("lets a sentence-initial fabricated name slip the gate (accepted gap, JUDGE's job)", () => {
+    // ADR 0004: a name placed sentence-initially is invisible to the deterministic
+    // gate and is left to the JUDGE. Every non-initial token here is from source.
+    expect(isFaithful(source, "Zephyr powered the Python API serving 2M requests on Redis")).toBe(
+      true,
+    );
   });
 });
 

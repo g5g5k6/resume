@@ -2,13 +2,19 @@ import { describe, expect, it } from "vitest";
 import { loadResumeData } from "@/lib/data";
 import { generateResume } from "./generate";
 import type { Rephrase } from "./rephrase";
-import { isFaithful, type Judge } from "./verify";
+import { isFaithful, verifyBullets, type Judge } from "./verify";
 
 /**
- * The zero-fabrication guarantee (acceptance criterion for #4): across many
- * keyword sets, no rendered Bullet may contain a number or proper noun absent
- * from its source — even when REPHRASE fabricates AND the judge is compromised.
- * This exercises the deterministic gate as the hard floor.
+ * The deterministic gate's fidelity boundary after ADR 0004 (VERIFY freezes
+ * facts, not phrasing). With a compromised judge, the gate ALONE still blocks:
+ *   - every fabricated number, at any position, and
+ *   - every fabricated proper noun EXCEPT one placed sentence-initially.
+ *
+ * The one case it no longer covers — a name placed sentence-initially — is the
+ * JUDGE's responsibility. The "sentence-initial fabrication" suite below pins
+ * that boundary, including the deliberately-accepted gap where a compromised
+ * judge lets such a name through (ADR 0004). The 10-keyword-set sweep exercises
+ * the gate as the hard floor for every mid-sentence fabrication.
  */
 
 const data = loadResumeData();
@@ -75,5 +81,54 @@ describe("fabrication fixture — zero facts absent from source", () => {
     // Faithful rewrites should still get through — the gate isn't just reverting
     // everything to original.
     expect(survivedRewrites).toBeGreaterThan(0);
+  });
+});
+
+describe("mid-sentence fabrication — the deterministic gate's floor", () => {
+  const source = sourceById.get(allIds[0])!;
+  const midSentenceFake = `${source} using the Zephyr platform for 4242 firms`;
+
+  it("reverts through VERIFY even when the judge is compromised", async () => {
+    // Contrast with the sentence-initial case below: a mid-sentence name (and any
+    // number) is blocked by the gate itself, so a defeated judge changes nothing.
+    const [result] = await verifyBullets(
+      [{ id: allIds[0], original: source, text: midSentenceFake }],
+      passEverything,
+    );
+    expect(result.text).toBe(source);
+    expect(result.text).not.toContain("Zephyr");
+    expect(result.text).not.toContain("4242");
+  });
+});
+
+describe("sentence-initial fabrication — the JUDGE's responsibility", () => {
+  const source = sourceById.get(allIds[0])!;
+  // A fabricated proper noun as the opening token; every other token is from source.
+  const sentenceInitialFake = `Zephyr ${source}`;
+
+  it("slips the deterministic gate — the opening token is not proper-noun checked", () => {
+    expect(isFaithful(source, sentenceInitialFake)).toBe(true);
+  });
+
+  it("is caught by a working judge — VERIFY reverts it to the source", async () => {
+    const strictJudge: Judge = async (items) =>
+      Object.fromEntries(items.map((i) => [i.id, false]));
+    const [result] = await verifyBullets(
+      [{ id: allIds[0], original: source, text: sentenceInitialFake }],
+      strictJudge,
+    );
+    expect(result.text).toBe(source);
+    expect(result.text).not.toContain("Zephyr");
+  });
+
+  it("reaches the page only when the judge is ALSO compromised (accepted gap)", async () => {
+    const [result] = await verifyBullets(
+      [{ id: allIds[0], original: source, text: sentenceInitialFake }],
+      passEverything,
+    );
+    // Both gates defeated: the sentence-initial name survives. This is the
+    // deliberate trade documented in ADR 0004, not a regression — the judge is
+    // the designated (and here, only) catcher for this one position.
+    expect(result.text).toContain("Zephyr");
   });
 });

@@ -82,11 +82,11 @@ export function createRankBullets(): RankBullets {
 const REPHRASE_SYSTEM = [
   "You reword resume bullets to emphasize an HR user's keywords WITHOUT changing",
   "any facts. Return exactly one rewrite per input bullet, keyed by its id.",
-  "Hard constraints, because a downstream check discards any rewrite that breaks",
-  "them: keep every number and every capitalized word (metrics, companies,",
-  "products, acronyms) exactly as written in the source, and keep the bullet's",
-  "opening word. Introduce no number, name, or capitalized word absent from the",
-  "source. Adapt only the lowercase connecting words, emphasis, and ordering. If a",
+  "You are free to change the verb, lead with any word, and reorder clauses so the",
+  "wording fits the keywords. Hard constraint, because a downstream check discards",
+  "any rewrite that breaks it: keep every number and every proper noun (metrics,",
+  "company names, product names, acronyms) exactly as written in the source, and",
+  "introduce no number or name absent from the source. Do not add facts. If a",
   "bullet is already well-phrased, return it unchanged. One concise sentence each.",
 ].join(" ");
 

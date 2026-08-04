@@ -5,12 +5,17 @@ import type { RephrasedBullet } from "./rephrase";
  * Bullet back to its original text, so a reworded Bullet can never introduce a
  * fact absent from the Owner's source.
  *
- * 1. A deterministic pre-filter — every number and capitalized token in the
- *    rewrite must already appear in the source. Cheap, and airtight against
- *    fabricated numbers, metrics, and names.
+ * 1. A deterministic pre-filter that freezes *facts, not phrasing* (ADR 0004):
+ *    every number (at any position) and every proper noun *except the
+ *    sentence-initial token* in the rewrite must already appear in the source.
+ *    Excluding the opening token lets REPHRASE change the leading verb
+ *    ("Implemented" → "Engineered") for keyword-driven variety, while still
+ *    blocking every fabricated number and every mid-sentence fabricated name.
+ *    The deliberate cost: a fabricated name placed *sentence-initially* slips
+ *    this gate and is caught only by the judge below.
  * 2. A batched LLM judge over the survivors, for subtler distortions the
  *    deterministic gate misses (overstatement, changed meaning with the same
- *    words).
+ *    words) — and the sole catcher of a sentence-initial fabricated name.
  */
 
 /**
@@ -24,19 +29,35 @@ export function extractNumbers(text: string): Set<string> {
   return new Set(matches.map((n) => n.replace(/,/g, "").toLowerCase()));
 }
 
-/**
- * Every capitalized token, surrounding punctuation stripped. Deliberately
- * position-agnostic: a proper noun is caught wherever it sits (first word, after
- * an abbreviation, mid-sentence). The cost is that a rewrite which merely opens
- * with a different capitalized verb fails the check and falls back to the
- * (truthful) original — the design's intended safety bias.
- */
-export function extractCapitalized(text: string): Set<string> {
-  const tokens = text
+/** Split `text` into tokens with surrounding punctuation stripped, empties dropped. */
+function cleanTokens(text: string): string[] {
+  return text
     .split(/\s+/)
     .map((w) => w.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, ""))
-    .filter((t) => t !== "" && /^[A-Z]/.test(t));
-  return new Set(tokens);
+    .filter((t) => t !== "");
+}
+
+/**
+ * Every capitalized token, surrounding punctuation stripped. Position-agnostic —
+ * it includes the sentence-initial word. Used as the *source* superset, where a
+ * legitimately-present opening verb should count toward what a rewrite may reuse.
+ */
+export function extractCapitalized(text: string): Set<string> {
+  return new Set(cleanTokens(text).filter((t) => /^[A-Z]/.test(t)));
+}
+
+/**
+ * The capitalized tokens the fidelity check treats as proper nouns: every
+ * capitalized token *except the sentence-initial one* (dropped via `.slice(1)`).
+ * Used as the rewrite side of the subset check; see the module note above for
+ * why the opening token is exempt.
+ */
+export function extractProperNouns(text: string): Set<string> {
+  return new Set(
+    cleanTokens(text)
+      .slice(1)
+      .filter((t) => /^[A-Z]/.test(t)),
+  );
 }
 
 function isSubset(subset: Set<string>, superset: Set<string>): boolean {
@@ -47,13 +68,14 @@ function isSubset(subset: Set<string>, superset: Set<string>): boolean {
 }
 
 /**
- * Deterministic faithfulness: every number and capitalized token in `rewrite`
- * must already appear in `source`. Conservative — it may reject a faithful
- * rewrite, which only costs a fallback to the (truthful) original.
+ * Deterministic faithfulness (see the module note above). Every number in
+ * `rewrite` (at any position) and every proper noun — capitalized tokens except
+ * the opening one — must already appear in `source`. Conservative: a
+ * rejected-but-faithful rewrite only costs a fallback to the (truthful) original.
  */
 export function isFaithful(source: string, rewrite: string): boolean {
   if (!isSubset(extractNumbers(rewrite), extractNumbers(source))) return false;
-  return isSubset(extractCapitalized(rewrite), extractCapitalized(source));
+  return isSubset(extractProperNouns(rewrite), extractCapitalized(source));
 }
 
 /** A source/rewrite pair handed to the judge, keyed by its Bullet id. */
