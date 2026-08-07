@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { parse } from "yaml";
@@ -146,6 +146,24 @@ export interface ResumeData {
 export const DEFAULT_DATA_PATH = path.join(process.cwd(), "resume.data.yaml");
 
 /**
+ * A gitignored local override holding the Owner's real data. When present it wins
+ * over the committed {@link DEFAULT_DATA_PATH} (which holds only sample data), so
+ * real experience never enters git while the repo still runs from the sample on a
+ * fresh clone. To use real data locally: copy `resume.data.yaml` to this path and
+ * edit it.
+ */
+export const LOCAL_DATA_PATH = path.join(process.cwd(), "resume.data.local.yaml");
+
+/**
+ * Resolve which data file {@link loadResumeData} reads by default: the local
+ * override if it exists, else the committed sample. `exists` is injectable for
+ * tests.
+ */
+export function resolveDataPath(exists: (p: string) => boolean = existsSync): string {
+  return exists(LOCAL_DATA_PATH) ? LOCAL_DATA_PATH : DEFAULT_DATA_PATH;
+}
+
+/**
  * Parse and validate raw YAML text into a {@link ResumeData}, assigning Bullet
  * IDs and computing the `dataHash`. Throws a readable error on malformed input.
  */
@@ -186,7 +204,7 @@ export function parseResumeData(rawText: string): ResumeData {
 }
 
 /** Read and parse the resume data file from disk. */
-export function loadResumeData(filePath: string = DEFAULT_DATA_PATH): ResumeData {
+export function loadResumeData(filePath: string = resolveDataPath()): ResumeData {
   let rawText: string;
   try {
     rawText = readFileSync(filePath, "utf8");

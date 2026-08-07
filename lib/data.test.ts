@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   composeSurfaced,
+  DEFAULT_DATA_PATH,
   getDefaultResume,
+  LOCAL_DATA_PATH,
   loadResumeData,
   monthKey,
   parseResumeData,
+  resolveDataPath,
   type ResumeData,
 } from "./data";
 
@@ -340,6 +343,16 @@ describe("getDefaultResume — ordering and grouping", () => {
     };
     const positions = getDefaultResume(noDefaults);
     expect(positions.map((p) => p.company)).toEqual(["Older Co"]);
+  });
+});
+
+describe("resolveDataPath — local override", () => {
+  it("prefers the gitignored local override when it exists", () => {
+    expect(resolveDataPath(() => true)).toBe(LOCAL_DATA_PATH);
+  });
+
+  it("falls back to the committed data file when the override is absent", () => {
+    expect(resolveDataPath(() => false)).toBe(DEFAULT_DATA_PATH);
   });
 });
 
