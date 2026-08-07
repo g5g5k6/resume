@@ -17,3 +17,6 @@ next-env.d.ts
 
 # Real resume data — local override, never committed (see lib/data.ts resolveDataPath)
 resume.data.local.yaml
+
+# gstack tooling artifacts (QA reports, sessions)
+.gstack/
