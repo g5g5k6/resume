@@ -23,33 +23,42 @@ vi.mock("@anthropic-ai/sdk", () => ({
 import { createClaudeStages, formatSelectable, type CreateMessage } from "./llm";
 
 /**
- * The SDK's response shape, minimally. The fake speaks that shape on purpose —
+ * The SDK's response shape, minimally. The fakes speak that shape on purpose —
  * picking the wrong content block and truncating are the failures this seam
  * exists to make reachable. Cast because a real `Message` carries usage and
  * billing fields no test needs.
  */
-function textResponse(payload: unknown): Message {
+function message(content: unknown[], stopReason = "end_turn"): Message {
   return {
     id: "msg_test",
     type: "message",
     role: "assistant",
     model: "test",
-    content: [{ type: "text", text: JSON.stringify(payload) }],
-    stop_reason: "end_turn",
+    content,
+    stop_reason: stopReason,
     stop_sequence: null,
     usage: { input_tokens: 0, output_tokens: 0 },
   } as unknown as Message;
 }
 
-/** Stages wired to a scripted reply, plus the params each stage asked for. */
-function stagesReplying(payload: unknown) {
+/** A well-formed JSON body, the way a healthy stage answers. */
+const jsonReply = (payload: unknown) => message([{ type: "text", text: JSON.stringify(payload) }]);
+
+/** Whatever the model actually emitted — truncated, or not JSON at all. */
+const rawReply = (text: string) => message([{ type: "text", text }], "max_tokens");
+
+/** Stages wired to one canned response, plus the params each stage asked for. */
+function stagesFor(response: Message) {
   const calls: MessageCreateParamsNonStreaming[] = [];
   const create: CreateMessage = async (params) => {
     calls.push(params);
-    return textResponse(payload);
+    return response;
   };
   return { stages: createClaudeStages(create), calls };
 }
+
+/** Stages answering with a well-formed JSON body. */
+const stagesReplying = (payload: unknown) => stagesFor(jsonReply(payload));
 
 describe("formatSelectable", () => {
   it("renders a Bullet with no additive Fragments as one id-and-text line", () => {
@@ -120,14 +129,50 @@ describe("createClaudeStages", () => {
   });
 
   it("constrains every stage to structured JSON", async () => {
-    const { stages, calls } = stagesReplying({});
-    await stages.rankBullets("kw", []);
-    await stages.rephrase("kw", []);
-    await stages.judge([]);
+    const select = stagesReplying({ selections: [] });
+    const rephrase = stagesReplying({ rewrites: [] });
+    const judge = stagesReplying({ verdicts: [] });
+    await select.stages.rankBullets("kw", []);
+    await rephrase.stages.rephrase("kw", []);
+    await judge.stages.judge([]);
 
-    expect(calls).toHaveLength(3);
-    for (const call of calls) {
-      expect(call.output_config?.format).toMatchObject({ type: "json_schema" });
+    for (const { calls } of [select, rephrase, judge]) {
+      expect(calls).toHaveLength(1);
+      expect(calls[0].output_config?.format).toMatchObject({ type: "json_schema" });
     }
+  });
+});
+
+/**
+ * Structured outputs constrain decoding, but that guarantee does not cover
+ * truncation at the token limit, a refusal, the wrong content block, or a
+ * parameter change that drops the format config. One check at the wire catches
+ * all four — and must throw, so a broken response never reads as an empty one
+ * (ADR 0006).
+ */
+describe("wire-shape failures", () => {
+  it("throws on a truncated response rather than yielding an empty selection", async () => {
+    // Cut off at max_tokens mid-array — the case that used to arrive as `[]` and
+    // silently serve the Default Resume.
+    const { stages } = stagesFor(rawReply('{"selections":[{"id":"p0b0","fragment_'));
+    await expect(stages.rankBullets("kw", [])).rejects.toThrow(/SELECT/);
+  });
+
+  it("throws when the response carries no text block", async () => {
+    const { stages } = stagesFor(message([{ type: "thinking", thinking: "hmm", signature: "s" }]));
+    await expect(stages.rankBullets("kw", [])).rejects.toThrow(/SELECT/);
+  });
+
+  it("throws when the response parses but is not the shape that was asked for", async () => {
+    const { stages } = stagesFor(rawReply('{"selections":[{"id":42,"fragment_ids":[]}]}'));
+    await expect(stages.rankBullets("kw", [])).rejects.toThrow(/SELECT/);
+  });
+
+  it("throws for REPHRASE and JUDGE too, naming the stage", async () => {
+    const rephrase = stagesFor(rawReply('{"rewrites":[{"id":"p0b0"}]}'));
+    await expect(rephrase.stages.rephrase("kw", [])).rejects.toThrow(/REPHRASE/);
+
+    const judge = stagesFor(rawReply('{"verdicts":[{"id":"p0b0","faithful":"yes"}]}'));
+    await expect(judge.stages.judge([])).rejects.toThrow(/JUDGE/);
   });
 });

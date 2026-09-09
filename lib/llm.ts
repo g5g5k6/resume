@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Message, MessageCreateParamsNonStreaming } from "@anthropic-ai/sdk/resources/messages";
+import { z } from "zod";
 import type { EngineDeps } from "./engine/generate";
 import type { RankBullets, RankedBullet, SelectableBullet } from "./engine/select";
 import type { ChosenBullet, Rephrase } from "./engine/rephrase";
@@ -35,18 +36,59 @@ const defaultCreate: CreateMessage = (params) => {
 };
 
 /**
- * One structured-JSON turn: constrains the model to `schema` and returns the
- * parsed object. Structured outputs guarantee the response matches `schema`, so
- * a plain `JSON.parse` of the text block is safe.
+ * What a stage asks Claude for, described from both sides of the wire:
+ * `jsonSchema` constrains decoding on the way out, `shape` checks the answer on
+ * the way back, and stage result types are inferred from `shape`.
+ *
+ * They are two objects, edited together, rather than one generated from the
+ * other. Both generators were tried and rejected: the SDK's `zodOutputFormat`
+ * folds the `$schema` key into a junk `description` string that would then be
+ * sent to the model as part of the constraint, and `z.toJSONSchema` needs the
+ * `zod/v4` subpath — a second zod API alongside the v3 one `lib/data.ts` uses —
+ * and still emits a `$schema` key this request has never carried.
+ *
+ * The cost is real: nothing checks that the two agree, so they must be edited
+ * together. Generating one from the other is worth revisiting whenever this repo
+ * moves to zod v4 wholesale.
+ */
+interface WireFormat<T> {
+  jsonSchema: Record<string, unknown>;
+  shape: z.ZodType<T>;
+}
+
+/**
+ * Pair a stage's two schema halves, inferring the stage's result type from the
+ * zod shape rather than restating it by hand.
+ */
+function wireFormat<S extends z.ZodType>(
+  jsonSchema: Record<string, unknown>,
+  shape: S,
+): WireFormat<z.infer<S>> {
+  return { jsonSchema, shape };
+}
+
+/**
+ * One structured-JSON turn: constrains the model to the stage's JSON Schema, then
+ * checks the whole parsed response once against the matching zod shape and throws
+ * if it does not hold.
+ *
+ * Structured outputs guarantee shape through constrained decoding, but that
+ * guarantee does not cover truncation at `max_tokens`, a refusal, picking the
+ * wrong content block, or a parameter change that drops the format config. None
+ * of those are schema violations, and all four used to arrive as a partial or
+ * empty result — indistinguishable from a legitimate empty one. Failing here is
+ * what makes them distinguishable (ADR 0006).
  */
 async function structuredTurn<T>(
   create: CreateMessage,
   args: {
+    /** Names the failing stage in the thrown error, so an outage is legible. */
+    stage: string;
     model: string;
     maxTokens: number;
     system: string;
     prompt: string;
-    schema: Record<string, unknown>;
+    format: WireFormat<T>;
     /** Disable thinking on models where it is on by default (the mid model). */
     disableThinking?: boolean;
   },
@@ -56,12 +98,37 @@ async function structuredTurn<T>(
     max_tokens: args.maxTokens,
     system: args.system,
     ...(args.disableThinking ? { thinking: { type: "disabled" as const } } : {}),
-    output_config: { format: { type: "json_schema", schema: args.schema } },
+    output_config: { format: { type: "json_schema", schema: args.format.jsonSchema } },
     messages: [{ role: "user", content: args.prompt }],
   });
 
-  const text = response.content.find((block) => block.type === "text")?.text ?? "{}";
-  return JSON.parse(text) as T;
+  const text = response.content.find((block) => block.type === "text")?.text;
+  if (text === undefined) {
+    throw new Error(
+      `${args.stage}: Claude returned no text block (stop reason: ${response.stop_reason}).`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // The truncation case: cut off at max_tokens, so the JSON never closes.
+    throw new Error(
+      `${args.stage}: Claude's response was not valid JSON (stop reason: ${response.stop_reason}).`,
+    );
+  }
+
+  const result = args.format.shape.safeParse(parsed);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join("\n");
+    throw new Error(
+      `${args.stage}: Claude's response did not match the requested shape:\n${issues}`,
+    );
+  }
+  return result.data;
 }
 
 // ---- SELECT ---------------------------------------------------------------
@@ -79,25 +146,30 @@ const SELECT_SYSTEM = [
   "any text, and do not return a bullet id more than once.",
 ].join(" ");
 
-const RANK_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    selections: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          id: { type: "string" },
-          fragment_ids: { type: "array", items: { type: "string" } },
+const RANK_FORMAT = wireFormat(
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      selections: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string" },
+            fragment_ids: { type: "array", items: { type: "string" } },
+          },
+          required: ["id", "fragment_ids"],
         },
-        required: ["id", "fragment_ids"],
       },
     },
+    required: ["selections"],
   },
-  required: ["selections"],
-} as const;
+  z.object({
+    selections: z.array(z.object({ id: z.string(), fragment_ids: z.array(z.string()) })),
+  }),
+);
 
 /**
  * Render one Bullet for the SELECT prompt: its text, then any additive fragments.
@@ -114,25 +186,18 @@ export function formatSelectable(b: SelectableBullet): string {
 function createRankBullets(create: CreateMessage): RankBullets {
   return async (keywords: string, selectable: SelectableBullet[]) => {
     const bulletList = selectable.map(formatSelectable).join("\n\n");
-    const parsed = await structuredTurn<{
-      selections?: { id?: unknown; fragment_ids?: unknown }[];
-    }>(create, {
+    const { selections } = await structuredTurn(create, {
+      stage: "SELECT",
       model: FAST_MODEL,
       maxTokens: 1024,
       system: SELECT_SYSTEM,
       prompt: `Keywords: ${keywords}\n\nBullets:\n${bulletList}`,
-      schema: RANK_SCHEMA,
+      format: RANK_FORMAT,
     });
 
-    const ranked: RankedBullet[] = [];
-    for (const sel of parsed.selections ?? []) {
-      if (typeof sel?.id !== "string") continue;
-      const fragmentIds = Array.isArray(sel.fragment_ids)
-        ? sel.fragment_ids.filter((id): id is string => typeof id === "string")
-        : [];
-      ranked.push({ id: sel.id, fragmentIds });
-    }
-    return ranked;
+    // A rename across the wire boundary, not a check: whether these ids name real
+    // Bullets and Additive Fragments is `selectBullets`'s question, not this one.
+    return selections.map((s): RankedBullet => ({ id: s.id, fragmentIds: s.fragment_ids }));
   };
 }
 
@@ -149,46 +214,47 @@ const REPHRASE_SYSTEM = [
   "bullet is already well-phrased, return it unchanged. One concise sentence each.",
 ].join(" ");
 
-const REPHRASE_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    rewrites: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          id: { type: "string" },
-          text: { type: "string" },
+const REPHRASE_FORMAT = wireFormat(
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      rewrites: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string" },
+            text: { type: "string" },
+          },
+          required: ["id", "text"],
         },
-        required: ["id", "text"],
       },
     },
+    required: ["rewrites"],
   },
-  required: ["rewrites"],
-} as const;
+  z.object({
+    rewrites: z.array(z.object({ id: z.string(), text: z.string() })),
+  }),
+);
 
 /** The real {@link Rephrase} backed by the Claude mid model. */
 function createRephrase(create: CreateMessage): Rephrase {
   return async (keywords: string, chosen: ChosenBullet[]) => {
     const bulletList = chosen.map((b) => `${b.id}: ${b.text}`).join("\n");
-    const parsed = await structuredTurn<{ rewrites?: { id?: unknown; text?: unknown }[] }>(create, {
+    const { rewrites } = await structuredTurn(create, {
+      stage: "REPHRASE",
       model: MID_MODEL,
       maxTokens: 2048,
       disableThinking: true,
       system: REPHRASE_SYSTEM,
       prompt: `Keywords: ${keywords}\n\nBullets:\n${bulletList}`,
-      schema: REPHRASE_SCHEMA,
+      format: REPHRASE_FORMAT,
     });
 
-    const rewrites: Record<string, string> = {};
-    for (const rewrite of parsed.rewrites ?? []) {
-      if (typeof rewrite?.id === "string" && typeof rewrite?.text === "string") {
-        rewrites[rewrite.id] = rewrite.text;
-      }
-    }
-    return rewrites;
+    // Enforcing one rewrite per chosen Bullet stays `rephraseBullets`'s job.
+    return Object.fromEntries(rewrites.map((r) => [r.id, r.text]));
   };
 }
 
@@ -201,25 +267,30 @@ const JUDGE_SYSTEM = [
   "faithful=false. When in doubt, return false.",
 ].join(" ");
 
-const JUDGE_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    verdicts: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          id: { type: "string" },
-          faithful: { type: "boolean" },
+const JUDGE_FORMAT = wireFormat(
+  {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      verdicts: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string" },
+            faithful: { type: "boolean" },
+          },
+          required: ["id", "faithful"],
         },
-        required: ["id", "faithful"],
       },
     },
+    required: ["verdicts"],
   },
-  required: ["verdicts"],
-} as const;
+  z.object({
+    verdicts: z.array(z.object({ id: z.string(), faithful: z.boolean() })),
+  }),
+);
 
 /** The real {@link Judge} backed by the Claude fast model. */
 function createJudge(create: CreateMessage): Judge {
@@ -227,24 +298,17 @@ function createJudge(create: CreateMessage): Judge {
     const list = pairs
       .map((p) => `id: ${p.id}\nsource: ${p.source}\nrewrite: ${p.rewrite}`)
       .join("\n\n");
-    const parsed = await structuredTurn<{ verdicts?: { id?: unknown; faithful?: unknown }[] }>(
-      create,
-      {
-        model: FAST_MODEL,
-        maxTokens: 1024,
-        system: JUDGE_SYSTEM,
-        prompt: `Judge each pair:\n\n${list}`,
-        schema: JUDGE_SCHEMA,
-      },
-    );
+    const { verdicts } = await structuredTurn(create, {
+      stage: "JUDGE",
+      model: FAST_MODEL,
+      maxTokens: 1024,
+      system: JUDGE_SYSTEM,
+      prompt: `Judge each pair:\n\n${list}`,
+      format: JUDGE_FORMAT,
+    });
 
-    const verdicts: Record<string, boolean> = {};
-    for (const verdict of parsed.verdicts ?? []) {
-      if (typeof verdict?.id === "string" && typeof verdict?.faithful === "boolean") {
-        verdicts[verdict.id] = verdict.faithful;
-      }
-    }
-    return verdicts;
+    // A missing id still means "not explicitly faithful" to `verifyBullets`.
+    return Object.fromEntries(verdicts.map((v) => [v.id, v.faithful]));
   };
 }
 
