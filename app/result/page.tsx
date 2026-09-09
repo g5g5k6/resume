@@ -3,28 +3,10 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import type { GenerateError, GenerateResponse } from "@/lib/contract";
+import type { GenerateResponse } from "@/lib/contract";
 import ResumeView from "../ResumeView";
 import styles from "../page.module.css";
-
-/**
- * Pull a friendly, non-technical message off a failed `/api/generate` response.
- * The route already sends HR-appropriate copy for 429 (rate-limited and daily
- * cap) and 500 in an `error` field, so an HR User never sees a raw status code.
- */
-async function friendlyError(res: Response): Promise<string> {
-  try {
-    // Untrusted network input — a proxy can answer with HTML, or with `error`
-    // of the wrong type — so the body is read with `unknown` values and guarded.
-    // Keying off {@link GenerateError} still ties this to the route's contract:
-    // renaming the field there breaks this read.
-    const body = (await res.json()) as { [K in keyof GenerateError]?: unknown };
-    if (typeof body.error === "string" && body.error.trim() !== "") return body.error;
-  } catch {
-    // fall through to the generic message
-  }
-  return "Something went wrong while building the resume. Please try again.";
-}
+import { deliverIfCurrent, requestTailoredResume } from "./transport";
 
 function Result() {
   const keywords = useSearchParams().get("keywords") ?? "";
@@ -36,32 +18,16 @@ function Result() {
 
   useEffect(() => {
     if (keywords.trim() === "") return;
-    let active = true;
     setState({ status: "loading" });
-    fetch("/api/generate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ keywords }),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const message = await friendlyError(res);
-          if (active) setState({ status: "error", message });
-          return;
-        }
-        const data = (await res.json()) as GenerateResponse;
-        if (active) setState({ status: "ready", data });
-      })
-      .catch(() => {
-        if (active)
-          setState({
-            status: "error",
-            message: "Couldn't reach the server. Check your connection and try again.",
-          });
-      });
-    return () => {
-      active = false;
-    };
+    // The cleanup drops a result the next Keywords have superseded; the request
+    // itself is left to finish (see `deliverIfCurrent`).
+    return deliverIfCurrent(requestTailoredResume(keywords), (result) =>
+      setState(
+        result.ok
+          ? { status: "ready", data: result.data }
+          : { status: "error", message: result.message },
+      ),
+    );
   }, [keywords]);
 
   if (keywords.trim() === "") {
