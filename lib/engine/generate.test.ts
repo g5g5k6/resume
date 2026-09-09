@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseResumeData } from "@/lib/data";
 import { generateResume, type EngineDeps } from "./generate";
-import type { RankedBullet } from "./select";
+import type { RankBullets, RankedBullet } from "./select";
 import type { Rephrase } from "./rephrase";
 import type { Judge } from "./verify";
 
@@ -192,5 +192,125 @@ describe("generateResume — FACET-SELECT content variety", () => {
 
     expect(textOf(result, "p0b0")).toBe("Built a data platform at p99 under 80ms");
     expect(textOf(result, "p0b0")).not.toContain("2M");
+  });
+});
+
+/**
+ * A stage outage is the per-Bullet fallback REPHRASE and VERIFY already implement,
+ * at n=all — not new tolerance (ADR 0006). Driven through the existing dependency
+ * seam with fakes that reject; no new seam.
+ */
+describe("generateResume — per-stage degradation", () => {
+  const outage = () => new Error("stage unavailable");
+  /** Faithful rewrites: they clear the deterministic gate, so the judge is reached. */
+  const rewritesAll: Rephrase = async () => ({
+    p0b0: "shipped api",
+    p0b1: "reduced spend",
+    p1b0: "ran billing",
+  });
+  const ORIGINALS = ["built api", "cut spend", "billing pipeline"];
+  const rankAll = async () => [r("p0b0"), r("p0b1"), r("p1b0")];
+
+  // A degraded stage reports its cause; the assertions live in their own test.
+  let reported: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    reported = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    reported.mockRestore();
+  });
+
+  it("keeps the Owner's original wording when REPHRASE is unavailable", async () => {
+    const rephrase: Rephrase = async () => {
+      throw outage();
+    };
+    const result = await generateResume("kw", data, deps({ rankBullets: rankAll, rephrase }));
+
+    // Still a Tailored Resume, still ordered — only the rewording is missing.
+    expect(result.mode).toBe("tailored");
+    expect(result.positions.map((p) => p.company)).toEqual(["Newer", "Older"]);
+    expect(result.positions.flatMap((p) => p.bullets.map((b) => b.text))).toEqual(ORIGINALS);
+  });
+
+  it("still surfaces the Keyword-relevant Fragments when REPHRASE is unavailable", async () => {
+    // FACET-SELECT ran before the failing call, so content variety survives and
+    // only sentence variety is lost — ADR 0004's two levers, degrading apart.
+    const rephrase: Rephrase = async () => {
+      throw outage();
+    };
+    const latency = await generateResume(
+      "low latency",
+      facetData,
+      deps({ rankBullets: async () => [r("p0b0", "p0b0f2"), r("p0b1"), r("p0b2")], rephrase }),
+    );
+
+    expect(textOf(latency, "p0b0")).toBe("Built a data platform at p99 under 80ms");
+    expect(textOf(latency, "p0b0")).not.toContain("2M");
+  });
+
+  it("reverts every rewrite to its surfaced original when JUDGE is unavailable", async () => {
+    const judge: Judge = async () => {
+      throw outage();
+    };
+    const result = await generateResume(
+      "kw",
+      data,
+      deps({ rankBullets: rankAll, rephrase: rewritesAll, judge }),
+    );
+
+    expect(result.mode).toBe("tailored");
+    // No rewrite survives a judge that never answered.
+    expect(result.positions.flatMap((p) => p.bullets.map((b) => b.text))).toEqual(ORIGINALS);
+  });
+
+  it("fails the request when SELECT is unavailable — nothing was ranked", async () => {
+    const rankBullets = async () => {
+      throw outage();
+    };
+    await expect(generateResume("kw", data, deps({ rankBullets }))).rejects.toThrow(
+      "stage unavailable",
+    );
+  });
+
+  // Each stage gets its own non-retry case: the spend counter increments once per
+  // cache-miss request, before any Claude call, so a retry would falsify ADR 0003's
+  // bound invisibly.
+  it("does not retry REPHRASE", async () => {
+    const rephrase = vi.fn<Rephrase>(async () => {
+      throw outage();
+    });
+    await generateResume("kw", data, deps({ rankBullets: rankAll, rephrase }));
+    expect(rephrase).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry JUDGE", async () => {
+    // Rewrites that survive the deterministic gate, so the judge is actually called.
+    const judge = vi.fn<Judge>(async () => {
+      throw outage();
+    });
+    await generateResume("kw", data, deps({ rankBullets: rankAll, rephrase: rewritesAll, judge }));
+    expect(judge).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry SELECT", async () => {
+    const rankBullets = vi.fn<RankBullets>(async () => {
+      throw outage();
+    });
+    await expect(generateResume("kw", data, deps({ rankBullets }))).rejects.toThrow();
+    expect(rankBullets).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the cause, since a degraded response otherwise looks normal", async () => {
+    // The route sees a resume that returned fine, so this log is the only trace an
+    // Owner has that rephrasing was down.
+    const rephrase: Rephrase = async () => {
+      throw outage();
+    };
+    await generateResume("kw", data, deps({ rankBullets: rankAll, rephrase }));
+
+    expect(reported).toHaveBeenCalledWith(
+      expect.stringContaining("REPHRASE"),
+      expect.any(Error),
+    );
   });
 });
