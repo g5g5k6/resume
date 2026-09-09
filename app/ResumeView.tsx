@@ -1,4 +1,4 @@
-import type { Owner, Position } from "@/lib/data";
+import type { Owner, Position } from "@/lib/contract";
 import styles from "./page.module.css";
 
 function formatEnd(end: string): string {

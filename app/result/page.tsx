@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import type { GenerateResponse } from "@/lib/engine/generate";
+import type { GenerateError, GenerateResponse } from "@/lib/contract";
 import ResumeView from "../ResumeView";
 import styles from "../page.module.css";
 
@@ -14,7 +14,11 @@ import styles from "../page.module.css";
  */
 async function friendlyError(res: Response): Promise<string> {
   try {
-    const body = (await res.json()) as { error?: unknown };
+    // Untrusted network input — a proxy can answer with HTML, or with `error`
+    // of the wrong type — so the body is read with `unknown` values and guarded.
+    // Keying off {@link GenerateError} still ties this to the route's contract:
+    // renaming the field there breaks this read.
+    const body = (await res.json()) as { [K in keyof GenerateError]?: unknown };
     if (typeof body.error === "string" && body.error.trim() !== "") return body.error;
   } catch {
     // fall through to the generic message

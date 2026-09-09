@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import type { GenerateError, GenerateResponse } from "@/lib/contract";
 import { loadResumeData } from "@/lib/data";
-import { generateResume, type GenerateResponse } from "@/lib/engine/generate";
+import { generateResume } from "@/lib/engine/generate";
 import { createJudge, createRankBullets, createRephrase } from "@/lib/llm";
 import { getStore } from "@/lib/redis";
 import {
@@ -15,6 +16,15 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/**
+ * Every failure path answers with the same named shape, so the page reads one
+ * contract instead of matching object literals by convention. `message` is the
+ * HR-appropriate copy the page renders verbatim.
+ */
+function errorResponse(message: string, status: number): NextResponse<GenerateError> {
+  return NextResponse.json<GenerateError>({ error: message }, { status });
+}
 
 /** Best-effort client IP from the proxy headers Vercel sets, for rate limiting. */
 function clientIp(request: Request): string {
@@ -32,20 +42,19 @@ function clientIp(request: Request): string {
  * per-IP rate limit → result cache → daily spend cap, before any LLM work. See
  * {@link ../../../lib/protect}.
  */
-export async function POST(request: Request) {
+export async function POST(
+  request: Request,
+): Promise<NextResponse<GenerateResponse | GenerateError>> {
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Request body must be JSON." }, { status: 400 });
+    return errorResponse("Request body must be JSON.", 400);
   }
 
   const keywords = (body as { keywords?: unknown })?.keywords;
   if (typeof keywords !== "string" || keywords.trim() === "") {
-    return NextResponse.json(
-      { error: "`keywords` is required and must be a non-empty string." },
-      { status: 400 },
-    );
+    return errorResponse("`keywords` is required and must be a non-empty string.", 400);
   }
 
   const trimmed = keywords.trim();
@@ -53,19 +62,16 @@ export async function POST(request: Request) {
   // Input length cap — reject over-long keywords before any LLM call, closing
   // the unbounded-input-token hole. Runs before the store touches, too.
   if (trimmed.length > MAX_KEYWORDS_LENGTH) {
-    return NextResponse.json(
-      { error: "Please keep keywords short — a role or a few skills works best." },
-      { status: 400 },
-    );
+    return errorResponse("Please keep keywords short — a role or a few skills works best.", 400);
   }
 
   const store = getStore();
 
   // 1. Per-IP rate limit — the cheapest guard, so it runs first.
   if (!(await checkRateLimit(store, clientIp(request)))) {
-    return NextResponse.json(
-      { error: "You're sending requests too quickly. Please wait a minute and try again." },
-      { status: 429 },
+    return errorResponse(
+      "You're sending requests too quickly. Please wait a minute and try again.",
+      429,
     );
   }
 
@@ -79,10 +85,7 @@ export async function POST(request: Request) {
 
     // 3. Daily spend cap — counted only for cache misses, which actually pay.
     if ((await recordSpend(store)) > dailyCap()) {
-      return NextResponse.json(
-        { error: "We've hit today's request limit. Please try again tomorrow." },
-        { status: 429 },
-      );
+      return errorResponse("We've hit today's request limit. Please try again tomorrow.", 429);
     }
 
     const result = await generateResume(trimmed, data, {
@@ -94,9 +97,6 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (err) {
     console.error("generate failed:", err);
-    return NextResponse.json(
-      { error: "Could not generate a resume right now. Please try again." },
-      { status: 500 },
-    );
+    return errorResponse("Could not generate a resume right now. Please try again.", 500);
   }
 }

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import type { GenerateResponse } from "@/lib/engine/generate";
+import type { GenerateResponse } from "@/lib/contract";
 
 /**
  * A tailored `/api/generate` response, stubbed so the E2E never touches Claude or

@@ -1,10 +1,5 @@
-import {
-  composeSurfaced,
-  getDefaultResume,
-  type Owner,
-  type Position,
-  type ResumeData,
-} from "@/lib/data";
+import type { GenerateResponse } from "@/lib/contract";
+import { composeSurfaced, getDefaultResume, type ResumeData } from "@/lib/data";
 import { orderByRelevance } from "./order";
 import { rephraseBullets, type ChosenBullet, type Rephrase } from "./rephrase";
 import { selectBullets, type RankBullets, type RankedBullet } from "./select";
@@ -22,16 +17,6 @@ export interface EngineDeps {
   rankBullets: RankBullets;
   rephrase: Rephrase;
   judge: Judge;
-}
-
-export interface GenerateResponse {
-  /** `"tailored"` when Keywords cleared the relevance floor, else `"default"`. */
-  mode: "tailored" | "default";
-  keywords: string;
-  owner: Owner;
-  /** Positions to render, already ordered and grouped. */
-  positions: Position[];
-  dataHash: string;
 }
 
 /**
