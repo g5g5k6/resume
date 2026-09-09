@@ -40,6 +40,23 @@ safe-to-omit by construction, the composer may freely surface, omit, or reorder 
 Owner-authored; never reaches selection.
 _Avoid_: Dimension, field, tag, attribute
 
+**Core Fragment**:
+The single Fragment carrying a Bullet's verb and spine. Exactly one per Bullet, always
+rendered, never offered as a choice — it is what makes the Bullet a sentence.
+_Avoid_: Main fragment, primary, head, base
+
+**Additive Fragment**:
+Any Fragment that is not the Core. Freely omittable by construction (see Fragment), so
+which Additives appear is the Keyword-driven lever on *content*.
+_Avoid_: Optional fragment, extra, modifier, detail
+
+**Surfaced**:
+Chosen to appear in a Tailored Resume. A Bullet's surfaced Fragments are its Core plus
+the Keyword-relevant Additives; the surfaced subset — never the whole Bullet — is what
+gets rephrased and what the fidelity check measures against, so an unsurfaced Fragment
+cannot reappear in the output.
+_Avoid_: Selected (means Bullets), included, visible, rendered
+
 **Keywords**:
 The free-form text an HR User supplies to describe the role they're hiring for. The
 sole tailoring input; drives which Bullets are selected, which of their Fragments
