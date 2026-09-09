@@ -39,23 +39,32 @@ const data = parseResumeData(YAML); // Newer: p0b0,p0b1 · Older: p1b0
 describe("orderByRelevance", () => {
   it("orders Positions reverse-chronologically regardless of relevance rank", () => {
     // Older Position's bullet is ranked most relevant, but Newer still comes first.
-    const positions = orderByRelevance(data, ["p1b0", "p0b0"]);
+    const positions = orderByRelevance(data, [
+      { id: "p1b0", text: "o-first" },
+      { id: "p0b0", text: "n-first" },
+    ]);
     expect(positions.map((p) => p.company)).toEqual(["Newer", "Older"]);
   });
 
   it("orders Bullets within a Position by relevance rank", () => {
-    const positions = orderByRelevance(data, ["p0b1", "p0b0"]);
-    expect(positions[0].bullets.map((b) => b.text)).toEqual(["n-second", "n-first"]);
+    const positions = orderByRelevance(data, [
+      { id: "p0b1", text: "n-second" },
+      { id: "p0b0", text: "n-first" },
+    ]);
+    expect(positions[0].bullets.map((b) => b.id)).toEqual(["p0b1", "p0b0"]);
   });
 
   it("keeps only selected Bullets and drops Positions with none", () => {
-    const positions = orderByRelevance(data, ["p0b0"]);
+    const positions = orderByRelevance(data, [{ id: "p0b0", text: "n-first" }]);
     expect(positions.map((p) => p.company)).toEqual(["Newer"]);
     expect(positions[0].bullets.map((b) => b.id)).toEqual(["p0b0"]);
   });
 
-  it("preserves the Owner's original wording", () => {
-    const positions = orderByRelevance(data, ["p0b0"]);
-    expect(positions[0].bullets[0].text).toBe("n-first");
+  it("renders the verified rewrite in place of the Bullet's authored text", () => {
+    // The branch production always takes: REPHRASE reworded the Bullet and VERIFY
+    // kept the rewrite, so the placed Bullet must carry the rewrite, not the YAML.
+    const positions = orderByRelevance(data, [{ id: "p0b0", text: "n-first, reworded" }]);
+    expect(positions[0].bullets[0].text).toBe("n-first, reworded");
+    expect(data.positions[0].bullets[0].text).toBe("n-first"); // source data untouched
   });
 });

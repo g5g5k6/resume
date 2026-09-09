@@ -60,7 +60,5 @@ export async function generateResume(
   const rephrased = await rephraseBullets(keywords, chosen, deps.rephrase);
   const verified = await verifyBullets(rephrased, deps.judge);
 
-  const rankedIds = ranked.map((r) => r.id);
-  const textById = new Map(verified.map((b) => [b.id, b.text]));
-  return { ...base, mode: "tailored", positions: orderByRelevance(data, rankedIds, textById) };
+  return { ...base, mode: "tailored", positions: orderByRelevance(data, verified) };
 }
