@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { GenerateError, GenerateResponse } from "@/lib/contract";
 import { loadResumeData } from "@/lib/data";
 import { generateResume } from "@/lib/engine/generate";
-import { createJudge, createRankBullets, createRephrase } from "@/lib/llm";
+import { createClaudeStages } from "@/lib/llm";
 import { getStore } from "@/lib/redis";
 import {
   MAX_KEYWORDS_LENGTH,
@@ -88,11 +88,7 @@ export async function POST(
       return errorResponse("We've hit today's request limit. Please try again tomorrow.", 429);
     }
 
-    const result = await generateResume(trimmed, data, {
-      rankBullets: createRankBullets(),
-      rephrase: createRephrase(),
-      judge: createJudge(),
-    });
+    const result = await generateResume(trimmed, data, createClaudeStages());
     await setCached(store, key, result);
     return NextResponse.json(result);
   } catch (err) {

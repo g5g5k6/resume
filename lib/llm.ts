@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { Message, MessageCreateParamsNonStreaming } from "@anthropic-ai/sdk/resources/messages";
+import type { EngineDeps } from "./engine/generate";
 import type { RankBullets, RankedBullet, SelectableBullet } from "./engine/select";
 import type { ChosenBullet, Rephrase } from "./engine/rephrase";
 import type { Judge } from "./engine/verify";
@@ -13,23 +15,43 @@ import type { Judge } from "./engine/verify";
 const FAST_MODEL = "claude-haiku-4-5";
 const MID_MODEL = "claude-sonnet-5";
 
-const client = new Anthropic();
+/**
+ * The SDK's non-streaming message call — the one seam beneath every Claude stage,
+ * injected so prompts, model tiering, schemas, and response parsing are all
+ * reachable from a test. It sits *below* {@link structuredTurn} deliberately: a
+ * seam above the helper would leave exactly that parsing untestable.
+ */
+export type CreateMessage = (params: MessageCreateParamsNonStreaming) => Promise<Message>;
+
+/**
+ * The real call, against a client built on first use and reused after. Lazy so
+ * this module is importable without `ANTHROPIC_API_KEY` — constructing the client
+ * at module load made every importer, tests included, need credentials.
+ */
+let client: Anthropic | undefined;
+const defaultCreate: CreateMessage = (params) => {
+  client ??= new Anthropic();
+  return client.messages.create(params);
+};
 
 /**
  * One structured-JSON turn: constrains the model to `schema` and returns the
  * parsed object. Structured outputs guarantee the response matches `schema`, so
  * a plain `JSON.parse` of the text block is safe.
  */
-async function structuredTurn<T>(args: {
-  model: string;
-  maxTokens: number;
-  system: string;
-  prompt: string;
-  schema: Record<string, unknown>;
-  /** Disable thinking on models where it is on by default (the mid model). */
-  disableThinking?: boolean;
-}): Promise<T> {
-  const response = await client.messages.create({
+async function structuredTurn<T>(
+  create: CreateMessage,
+  args: {
+    model: string;
+    maxTokens: number;
+    system: string;
+    prompt: string;
+    schema: Record<string, unknown>;
+    /** Disable thinking on models where it is on by default (the mid model). */
+    disableThinking?: boolean;
+  },
+): Promise<T> {
+  const response = await create({
     model: args.model,
     max_tokens: args.maxTokens,
     system: args.system,
@@ -77,20 +99,24 @@ const RANK_SCHEMA = {
   required: ["selections"],
 } as const;
 
-/** Render one Bullet for the SELECT prompt: its text, then any additive fragments. */
-function formatSelectable(b: SelectableBullet): string {
+/**
+ * Render one Bullet for the SELECT prompt: its text, then any additive fragments.
+ * Exported for direct testing — it produces the id-and-text layout the model must
+ * parse back, so a change to it should force someone to look.
+ */
+export function formatSelectable(b: SelectableBullet): string {
   if (b.additives.length === 0) return `${b.id}: ${b.text}`;
   const additives = b.additives.map((f) => `    ${f.id}: ${f.text}`).join("\n");
   return `${b.id}: ${b.text}\n  additive fragments:\n${additives}`;
 }
 
 /** The real {@link RankBullets} backed by the Claude fast model (SELECT + FACET-SELECT). */
-export function createRankBullets(): RankBullets {
+function createRankBullets(create: CreateMessage): RankBullets {
   return async (keywords: string, selectable: SelectableBullet[]) => {
     const bulletList = selectable.map(formatSelectable).join("\n\n");
     const parsed = await structuredTurn<{
       selections?: { id?: unknown; fragment_ids?: unknown }[];
-    }>({
+    }>(create, {
       model: FAST_MODEL,
       maxTokens: 1024,
       system: SELECT_SYSTEM,
@@ -144,10 +170,10 @@ const REPHRASE_SCHEMA = {
 } as const;
 
 /** The real {@link Rephrase} backed by the Claude mid model. */
-export function createRephrase(): Rephrase {
+function createRephrase(create: CreateMessage): Rephrase {
   return async (keywords: string, chosen: ChosenBullet[]) => {
     const bulletList = chosen.map((b) => `${b.id}: ${b.text}`).join("\n");
-    const parsed = await structuredTurn<{ rewrites?: { id?: unknown; text?: unknown }[] }>({
+    const parsed = await structuredTurn<{ rewrites?: { id?: unknown; text?: unknown }[] }>(create, {
       model: MID_MODEL,
       maxTokens: 2048,
       disableThinking: true,
@@ -196,18 +222,21 @@ const JUDGE_SCHEMA = {
 } as const;
 
 /** The real {@link Judge} backed by the Claude fast model. */
-export function createJudge(): Judge {
+function createJudge(create: CreateMessage): Judge {
   return async (pairs) => {
     const list = pairs
       .map((p) => `id: ${p.id}\nsource: ${p.source}\nrewrite: ${p.rewrite}`)
       .join("\n\n");
-    const parsed = await structuredTurn<{ verdicts?: { id?: unknown; faithful?: unknown }[] }>({
-      model: FAST_MODEL,
-      maxTokens: 1024,
-      system: JUDGE_SYSTEM,
-      prompt: `Judge each pair:\n\n${list}`,
-      schema: JUDGE_SCHEMA,
-    });
+    const parsed = await structuredTurn<{ verdicts?: { id?: unknown; faithful?: unknown }[] }>(
+      create,
+      {
+        model: FAST_MODEL,
+        maxTokens: 1024,
+        system: JUDGE_SYSTEM,
+        prompt: `Judge each pair:\n\n${list}`,
+        schema: JUDGE_SCHEMA,
+      },
+    );
 
     const verdicts: Record<string, boolean> = {};
     for (const verdict of parsed.verdicts ?? []) {
@@ -216,5 +245,21 @@ export function createJudge(): Judge {
       }
     }
     return verdicts;
+  };
+}
+
+// ---- Assembly -------------------------------------------------------------
+
+/**
+ * Build the engine's dependency bundle, all three stages sharing one call into
+ * Claude. The route learns this name and no other; a test injects `create` to
+ * drive every stage — prompt, model tier, schema, and parsing included — without
+ * a network call or an API key.
+ */
+export function createClaudeStages(create: CreateMessage = defaultCreate): EngineDeps {
+  return {
+    rankBullets: createRankBullets(create),
+    rephrase: createRephrase(create),
+    judge: createJudge(create),
   };
 }

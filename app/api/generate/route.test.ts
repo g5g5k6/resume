@@ -6,16 +6,19 @@ import { MAX_KEYWORDS_LENGTH } from "@/lib/protect";
 // counts SELECT invocations so we can prove a cache hit skips the LLM. The ranked
 // Bullet ids are set per-test via `mockRanking` (surfacing no additives, since the
 // real data is single-core); rephrase/judge are inert (no rewrites), so the route
-// renders original wording.
+// renders original wording. One factory to mock, so the route's stages arrive as
+// the one bundle it asks for.
 let mockRanking: string[] = [];
 let rankCalls = 0;
 vi.mock("@/lib/llm", () => ({
-  createRankBullets: () => async () => {
-    rankCalls++;
-    return mockRanking.map((id) => ({ id, fragmentIds: [] }));
-  },
-  createRephrase: () => async () => ({}),
-  createJudge: () => async () => ({}),
+  createClaudeStages: () => ({
+    rankBullets: async () => {
+      rankCalls++;
+      return mockRanking.map((id) => ({ id, fragmentIds: [] }));
+    },
+    rephrase: async () => ({}),
+    judge: async () => ({}),
+  }),
 }));
 
 // A fresh in-memory store per test, so cache/rate-limit/spend state never leaks
