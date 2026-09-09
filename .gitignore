@@ -20,3 +20,4 @@ resume.data.local.yaml
 
 # gstack tooling artifacts (QA reports, sessions)
 .gstack/
+.vercel
