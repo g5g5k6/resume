@@ -43,6 +43,8 @@ beforeEach(() => {
   mockRanking = [];
   rankCalls = 0;
   store = createMemoryStore();
+  // The engine logs a phrasing line per request; this suite asserts on responses.
+  vi.spyOn(console, "info").mockImplementation(() => {});
 });
 
 describe("POST /api/generate", () => {

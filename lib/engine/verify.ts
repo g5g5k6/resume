@@ -93,22 +93,47 @@ export interface RewritePair {
 export type Judge = (pairs: RewritePair[]) => Promise<Record<string, boolean>>;
 
 /**
- * Verify rewrites and return each Bullet with its final text. Rewrites that fail
- * the deterministic gate fall back to original and skip the judge; survivors go
- * to one batched judge call, and any verdict that is not an explicit `true`
- * (false, or a missing id) also falls back to original.
+ * Why a Bullet carries the wording it does, as far as verification can tell.
+ * Reported rather than left for a caller to infer: "every Bullet kept the Owner's
+ * wording" means something very different when the gate rejected every rewrite
+ * than when REPHRASE returned good originals, and no count of reverted Bullets
+ * can separate those on its own (ADR 0006).
+ */
+export type VerifiedOutcome =
+  /** REPHRASE returned no usable rewrite for this Bullet, so nothing was checked. */
+  | "not-rewritten"
+  /** The rewrite passed both checks and is the text that renders. */
+  | "tuned"
+  /** The deterministic fidelity gate rejected the rewrite; the judge never saw it. */
+  | "reverted-by-gate"
+  /** The judge did not return an explicit `true` — false, or no verdict at all. */
+  | "reverted-by-judge";
+
+/** A Bullet after VERIFY: its final text, and why that is the text. */
+export interface VerifiedBullet extends RephrasedBullet {
+  outcome: VerifiedOutcome;
+}
+
+/**
+ * Verify rewrites and return each Bullet with its final text and the reason for
+ * it. Rewrites that fail the deterministic gate fall back to original and skip
+ * the judge; survivors go to one batched judge call, and any verdict that is not
+ * an explicit `true` (false, or a missing id) also falls back to original.
  */
 export async function verifyBullets(
   bullets: RephrasedBullet[],
   judge: Judge,
-): Promise<RephrasedBullet[]> {
+): Promise<VerifiedBullet[]> {
   // Deterministic gate. A Bullet that was never reworded needs no check.
-  const afterDeterministic = bullets.map((bullet) => {
-    if (bullet.text === bullet.original) return bullet;
-    return isFaithful(bullet.original, bullet.text) ? bullet : { ...bullet, text: bullet.original };
+  const afterDeterministic: VerifiedBullet[] = bullets.map((bullet) => {
+    if (bullet.text === bullet.original) return { ...bullet, outcome: "not-rewritten" };
+    return isFaithful(bullet.original, bullet.text)
+      ? { ...bullet, outcome: "tuned" }
+      : { ...bullet, text: bullet.original, outcome: "reverted-by-gate" };
   });
 
-  const survivors = afterDeterministic.filter((b) => b.text !== b.original);
+  // Only a still-tuned Bullet has a rewrite left for the judge to rule on.
+  const survivors = afterDeterministic.filter((b) => b.outcome === "tuned");
   if (survivors.length === 0) return afterDeterministic;
 
   const verdicts = await judge(
@@ -116,7 +141,9 @@ export async function verifyBullets(
   );
 
   return afterDeterministic.map((bullet) => {
-    if (bullet.text === bullet.original) return bullet;
-    return verdicts[bullet.id] === true ? bullet : { ...bullet, text: bullet.original };
+    if (bullet.outcome !== "tuned") return bullet;
+    return verdicts[bullet.id] === true
+      ? bullet
+      : { ...bullet, text: bullet.original, outcome: "reverted-by-judge" };
   });
 }

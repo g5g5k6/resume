@@ -143,3 +143,50 @@ describe("verifyBullets", () => {
     expect(judge).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The cause is *reported*, not inferred: "all five Bullets kept the Owner's
+ * wording" means something very different if the gate rejected five rewrites than
+ * if REPHRASE returned five good originals. Only verification can tell those
+ * apart, so it says which (ADR 0006).
+ */
+describe("verifyBullets — reported outcome", () => {
+  const outcomes = async (bullets: RephrasedBullet[], verdicts: Record<string, boolean> = {}) =>
+    (await verifyBullets(bullets, async () => verdicts)).map((b) => b.outcome);
+
+  it("reports a Bullet REPHRASE never reworded as not rewritten", async () => {
+    expect(await outcomes([reworded("a", "cut spend", "cut spend")])).toEqual(["not-rewritten"]);
+  });
+
+  it("reports a surviving rewrite as tuned", async () => {
+    expect(await outcomes([reworded("a", "cut spend", "reduced spend")], { a: true })).toEqual([
+      "tuned",
+    ]);
+  });
+
+  it("reports a rewrite the deterministic gate rejected", async () => {
+    expect(await outcomes([reworded("a", "shipped 2M requests", "shipped 5M requests")])).toEqual([
+      "reverted-by-gate",
+    ]);
+  });
+
+  it("reports a rewrite the judge rejected, and one it never answered for", async () => {
+    const rejected = await outcomes([reworded("a", "cut spend", "reduced spend")], { a: false });
+    const omitted = await outcomes([reworded("a", "cut spend", "reduced spend")]);
+    expect(rejected).toEqual(["reverted-by-judge"]);
+    expect(omitted).toEqual(["reverted-by-judge"]);
+  });
+
+  it("reports each Bullet's own outcome across a mixed batch", async () => {
+    const result = await outcomes(
+      [
+        reworded("a", "cut spend", "cut spend"),
+        reworded("b", "cut spend", "reduced spend"),
+        reworded("c", "shipped 2M", "shipped 5M"),
+        reworded("d", "cut spend", "slashed spend"),
+      ],
+      { b: true, d: false },
+    );
+    expect(result).toEqual(["not-rewritten", "tuned", "reverted-by-gate", "reverted-by-judge"]);
+  });
+});
