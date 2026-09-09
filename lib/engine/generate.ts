@@ -2,7 +2,7 @@ import type { GenerateResponse } from "@/lib/contract";
 import { composeSurfaced, getDefaultResume, type ResumeData } from "@/lib/data";
 import { orderByRelevance } from "./order";
 import { rephraseBullets, type ChosenBullet, type Rephrase } from "./rephrase";
-import { selectBullets, type RankBullets, type RankedBullet } from "./select";
+import { selectBullets, type RankBullets, type SelectedBullet } from "./select";
 import { verifyBullets, type Judge } from "./verify";
 
 /**
@@ -24,14 +24,14 @@ export interface EngineDeps {
  * core plus only the FACET-SELECTed additive Fragments. This surfaced subset is
  * what REPHRASE assembles and what VERIFY later checks against, so a Fragment
  * FACET-SELECT dropped can never leak back in and pass.
+ *
+ * SELECT validated these against the Owner's data and handed the Bullets over, so
+ * there is nothing to look up and nothing to assert.
  */
-function chosenBullets(data: ResumeData, ranked: RankedBullet[]): ChosenBullet[] {
-  const bulletById = new Map(
-    data.positions.flatMap((p) => p.bullets.map((b) => [b.id, b] as const)),
-  );
-  return ranked.map(({ id, fragmentIds }) => ({
-    id,
-    text: composeSurfaced(bulletById.get(id)!, new Set(fragmentIds)),
+function chosenBullets(selected: SelectedBullet[]): ChosenBullet[] {
+  return selected.map(({ bullet, fragmentIds }) => ({
+    id: bullet.id,
+    text: composeSurfaced(bullet, new Set(fragmentIds)),
   }));
 }
 
@@ -48,15 +48,15 @@ export async function generateResume(
   data: ResumeData,
   deps: EngineDeps,
 ): Promise<GenerateResponse> {
-  const ranked = await selectBullets(keywords, data, deps.rankBullets);
+  const selected = await selectBullets(keywords, data, deps.rankBullets);
 
   const base = { keywords, owner: data.owner, dataHash: data.dataHash };
 
-  if (ranked.length < RELEVANCE_FLOOR) {
+  if (selected.length < RELEVANCE_FLOOR) {
     return { ...base, mode: "default", positions: getDefaultResume(data) };
   }
 
-  const chosen = chosenBullets(data, ranked);
+  const chosen = chosenBullets(selected);
   const rephrased = await rephraseBullets(keywords, chosen, deps.rephrase);
   const verified = await verifyBullets(rephrased, deps.judge);
 

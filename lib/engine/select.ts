@@ -1,4 +1,4 @@
-import type { ResumeData } from "@/lib/data";
+import type { Bullet, ResumeData } from "@/lib/data";
 
 /** An additive Fragment offered to FACET-SELECT: its id and text. */
 export interface SelectableFragment {
@@ -19,12 +19,27 @@ export interface SelectableBullet {
 }
 
 /**
- * A selected Bullet: its id (array order encodes relevance rank) and the ids of
- * the Keyword-relevant *additive* Fragments to surface. The core is always kept,
- * so it never appears here; an empty `fragmentIds` surfaces the core alone.
+ * A ranked Bullet exactly as the model returned it: an id (array order encodes
+ * relevance rank) and the ids of the *additive* Fragments to surface. Raw — none
+ * of it has been checked against the Owner's data, so an id here may name nothing,
+ * name another Bullet's Fragment, name a core Fragment, or repeat.
  */
 export interface RankedBullet {
   id: string;
+  fragmentIds: string[];
+}
+
+/**
+ * A ranked Bullet after validation against the Owner's data — a distinct type
+ * from {@link RankedBullet} so the compiler tells checked from unchecked. It
+ * carries the Bullet itself rather than an id, so no downstream module rebuilds
+ * an id lookup or asserts non-null on an invariant established here. Array order
+ * still encodes relevance rank; `fragmentIds` are guaranteed to be that Bullet's
+ * own additive Fragment ids, deduplicated, and an empty list surfaces the core
+ * alone.
+ */
+export interface SelectedBullet {
+  bullet: Bullet;
   fragmentIds: string[];
 }
 
@@ -41,51 +56,70 @@ export type RankBullets = (
 ) => Promise<RankedBullet[]>;
 
 /**
+ * A Bullet as this stage needs it: what SELECT is shown, plus what checking
+ * SELECT's answer takes — the Bullet itself and the Fragment ids it may surface.
+ * Both derive from one `!core` filter, so "additive" has a single source of truth.
+ */
+interface KnownBullet {
+  bullet: Bullet;
+  additiveIds: Set<string>;
+  selectable: SelectableBullet;
+}
+
+function knownBullet(bullet: Bullet): KnownBullet {
+  const additives: SelectableFragment[] = bullet.fragments
+    .filter((f) => !f.core)
+    .map((f) => ({ id: f.id, text: f.text }));
+  return {
+    bullet,
+    additiveIds: new Set(additives.map((f) => f.id)),
+    selectable: { id: bullet.id, text: bullet.text, additives },
+  };
+}
+
+/**
  * Run SELECT over all Bullets and return the relevant Bullets, ranked
  * most-relevant first. Model output is sanitized: unknown Bullet ids are dropped
  * and duplicates removed (keeping the model's relevance order), and each Bullet's
  * `fragmentIds` are narrowed to that Bullet's own additive Fragment ids
- * (unknown/foreign/core ids and duplicates removed).
+ * (unknown/foreign/core ids and duplicates removed). What survives is a
+ * {@link SelectedBullet} carrying the Bullet this stage already had in hand.
  */
 export async function selectBullets(
   keywords: string,
   data: ResumeData,
   rankBullets: RankBullets,
-): Promise<RankedBullet[]> {
-  const bullets = data.positions.flatMap((position) => position.bullets);
+): Promise<SelectedBullet[]> {
+  // Keyed by Bullet id, and also the order SELECT sees: ids are assigned
+  // positionally at load (`p{pos}b{bullet}`, lib/data.ts), so they are unique and
+  // this Map's insertion order is the Owner's authored order.
+  const known = new Map(
+    data.positions
+      .flatMap((position) => position.bullets)
+      .map((bullet) => [bullet.id, knownBullet(bullet)] as const),
+  );
 
-  const selectable: SelectableBullet[] = bullets.map((bullet) => ({
-    id: bullet.id,
-    text: bullet.text,
-    additives: bullet.fragments
-      .filter((f) => !f.core)
-      .map((f) => ({ id: f.id, text: f.text })),
-  }));
-
-  const raw = await rankBullets(keywords, selectable);
-
-  // Per Bullet, the set of ids the model is allowed to surface (its additives) —
-  // derived from `selectable` so "additive" has a single source of truth.
-  const additiveIdsByBullet = new Map(
-    selectable.map((b) => [b.id, new Set(b.additives.map((f) => f.id))]),
+  const raw = await rankBullets(
+    keywords,
+    [...known.values()].map((k) => k.selectable),
   );
 
   const seen = new Set<string>();
-  const ranked: RankedBullet[] = [];
-  for (const entry of raw) {
-    const allowed = additiveIdsByBullet.get(entry.id);
-    if (!allowed || seen.has(entry.id)) continue;
-    seen.add(entry.id);
+  const selected: SelectedBullet[] = [];
+  for (const ranked of raw) {
+    const match = known.get(ranked.id);
+    if (!match || seen.has(ranked.id)) continue;
+    seen.add(ranked.id);
 
     const seenFragments = new Set<string>();
     const fragmentIds: string[] = [];
-    for (const fid of entry.fragmentIds) {
-      if (allowed.has(fid) && !seenFragments.has(fid)) {
+    for (const fid of ranked.fragmentIds) {
+      if (match.additiveIds.has(fid) && !seenFragments.has(fid)) {
         seenFragments.add(fid);
         fragmentIds.push(fid);
       }
     }
-    ranked.push({ id: entry.id, fragmentIds });
+    selected.push({ bullet: match.bullet, fragmentIds });
   }
-  return ranked;
+  return selected;
 }

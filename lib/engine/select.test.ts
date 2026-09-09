@@ -39,6 +39,7 @@ positions:
 // p0b0: core p0b0f0 + additives p0b0f1, p0b0f2 · p0b1: core p0b1f0 · p1b0: core p1b0f0
 const data = parseResumeData(YAML);
 
+/** The raw wire shape a model returns — deliberately not the validated type. */
 const ranked = (id: string, fragmentIds: string[] = []): RankedBullet => ({ id, fragmentIds });
 
 describe("selectBullets", () => {
@@ -61,23 +62,35 @@ describe("selectBullets", () => {
 
   it("returns valid Bullets in the ranker's relevance order", async () => {
     const rank = vi.fn().mockResolvedValue([ranked("p1b0"), ranked("p0b0")]);
-    expect((await selectBullets("kw", data, rank)).map((r) => r.id)).toEqual(["p1b0", "p0b0"]);
+    const result = await selectBullets("kw", data, rank);
+    expect(result.map((s) => s.bullet.id)).toEqual(["p1b0", "p0b0"]);
+  });
+
+  it("carries each validated Bullet, so callers need no id lookup", async () => {
+    const rank = vi.fn().mockResolvedValue([ranked("p0b0", ["p0b0f2"])]);
+    const [selected] = await selectBullets("kw", data, rank);
+    // The Owner's own Bullet, not a copy — its Fragments travel with it, which is
+    // what lets the pipeline compose surfaced text without re-finding it.
+    expect(selected.bullet).toBe(data.positions[0].bullets[0]);
+    expect(selected.bullet.fragments.map((f) => f.id)).toEqual(["p0b0f0", "p0b0f1", "p0b0f2"]);
   });
 
   it("keeps the Keyword-relevant additive Fragment ids per Bullet", async () => {
     const rank = vi.fn().mockResolvedValue([ranked("p0b0", ["p0b0f2"])]);
     const result = await selectBullets("kw", data, rank);
-    expect(result).toEqual([{ id: "p0b0", fragmentIds: ["p0b0f2"] }]);
+    expect(result).toEqual([{ bullet: data.positions[0].bullets[0], fragmentIds: ["p0b0f2"] }]);
   });
 
   it("drops unknown Bullet ids the model may hallucinate", async () => {
     const rank = vi.fn().mockResolvedValue([ranked("p0b0"), ranked("p9b9"), ranked("nonsense")]);
-    expect((await selectBullets("kw", data, rank)).map((r) => r.id)).toEqual(["p0b0"]);
+    const result = await selectBullets("kw", data, rank);
+    expect(result.map((s) => s.bullet.id)).toEqual(["p0b0"]);
   });
 
   it("de-duplicates repeated Bullet ids, keeping first occurrence", async () => {
     const rank = vi.fn().mockResolvedValue([ranked("p0b0"), ranked("p1b0"), ranked("p0b0")]);
-    expect((await selectBullets("kw", data, rank)).map((r) => r.id)).toEqual(["p0b0", "p1b0"]);
+    const result = await selectBullets("kw", data, rank);
+    expect(result.map((s) => s.bullet.id)).toEqual(["p0b0", "p1b0"]);
   });
 
   it("narrows fragmentIds to the Bullet's own additives — drops core, foreign, unknown", async () => {
@@ -86,6 +99,6 @@ describe("selectBullets", () => {
       .fn()
       .mockResolvedValue([ranked("p0b0", ["p0b0f1", "p0b0f0", "p0b1f0", "zzz", "p0b0f1"])]);
     const result = await selectBullets("kw", data, rank);
-    expect(result).toEqual([{ id: "p0b0", fragmentIds: ["p0b0f1"] }]);
+    expect(result).toEqual([{ bullet: data.positions[0].bullets[0], fragmentIds: ["p0b0f1"] }]);
   });
 });
