@@ -11,8 +11,8 @@ owner:
     email: james@example.com
     location: Taipei, Taiwan
     links:
-      - https://github.com/jameskuo
-      - https://linkedin.com/in/jameskuo
+      - https://github.com/example-user
+      - https://linkedin.com/in/example-user
 
 positions:
   - company: Acme Corp

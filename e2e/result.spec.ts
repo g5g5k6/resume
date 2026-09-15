@@ -18,7 +18,7 @@ const TAILORED: GenerateResponse = {
     contact: {
       email: "james@example.com",
       location: "Taipei, Taiwan",
-      links: ["https://github.com/jameskuo"],
+      links: ["https://github.com/example-user"],
     },
   },
   positions: [
