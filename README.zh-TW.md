@@ -135,3 +135,7 @@ npm run test:e2e   # playwright
 - [docs/resume-data-format.md](docs/resume-data-format.md)：資料格式與撰寫指南
 - [docs/adr/](docs/adr/)：架構決策紀錄 0001–0006
 - [CHANGELOG.md](CHANGELOG.md)：版本紀錄
+
+## 授權
+
+[MIT](LICENSE) © James Kuo
